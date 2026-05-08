@@ -599,7 +599,8 @@ function getAmountColumnScore(header, dataRows, ci) {
   const h = String(header || '').trim();
   if (!h || /方式|类型|选择|状态|税源地|开户|账号|账户|手机号|电话|身份证|证件|银行|备注|说明|业务/.test(h)) return -Infinity;
   let score = 0;
-  if (/税前金额|税前收入|计划发放收入|应发金额|实发金额|客户支付合计|付款金额|应发金额/i.test(h)) score += 9;
+  if (/税前金额|税前收入/i.test(h)) score += 12;
+  else if (/计划发放收入|应发金额|实发金额|客户支付合计|付款金额|应发金额/i.test(h)) score += 9;
   else if (/金额|amount|收入额|合计金额|应付金额/i.test(h)) score += 6;
   const sample = dataRows.slice(0, 12);
   if (!sample.length) return score;
@@ -840,8 +841,13 @@ function generateOutput() {
         if (val !== raw.trim() && val.length < raw.trim().length) cleanCount++;
         out[destIdx] = val != null ? String(val).trim() : '';
       }
+      if (!out.some(v => v)) return;
+      const hasIdentity = (srcToDest.name != null && out[srcToDest.name]) ||
+                          (srcToDest.idCard != null && out[srcToDest.idCard]) ||
+                          (srcToDest.bankCard != null && out[srcToDest.bankCard]);
+      if (!hasIdentity) return;
       // Auto-infer gender from ID card if gender column exists but is empty
-      if (out.some(v => v)) { // only for rows with data
+      {
         const genderIdx = tpl.headers.indexOf(tpl.fieldMap.gender || '性别');
         if (genderIdx >= 0 && !out[genderIdx]) {
           const idCardIdx = tpl.headers.indexOf(tpl.fieldMap.idCard);
@@ -911,6 +917,7 @@ function genCustom() {
         if (val !== raw.trim() && val.length < raw.trim().length) cleanCount++;
         out[Number(fi)] = val != null ? String(val).trim() : '';
       }
+      if (!out.some(v => v)) return;
       state.outputRows.push(out);
     });
   });

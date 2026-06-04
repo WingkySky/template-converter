@@ -103,12 +103,16 @@
   }
   .template-card {
     padding: 16px; border: 2px solid var(--border); border-radius: var(--radius);
-    background: var(--surface2); cursor: pointer; transition: all 0.2s;
+    background: var(--surface2); cursor: pointer; transition: all 0.2s; position: relative;
   }
   .template-card:hover { border-color: var(--accent); }
   .template-card.selected { border-color: var(--accent); background: rgba(108,92,231,0.1); }
   .template-card .name { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
   .template-card .fields { font-size: 12px; color: var(--text2); line-height: 1.6; }
+  .template-card .multi-check {
+    position: absolute; top: 12px; right: 12px; width: 18px; height: 18px;
+    accent-color: var(--accent); pointer-events: none;
+  }
   .accum-bar {
     background: var(--surface2); border: 1px solid var(--border);
     border-radius: 8px; padding: 10px 16px; font-size: 13px;
@@ -280,6 +284,7 @@ const state = {
   accumFileCount: 0,
   mappingState: null,
   targetTemplate: null,
+  selectedTemplates: [],
   customFields: [],
   outputRows: null,
   outputHeaders: null,
@@ -842,6 +847,7 @@ function lookupShangShe(shangSheId) {
           seq: parseInt(match[1]),
           name: match[2],
           shangSheId: match[3],
+          content: findTaskContent(entry, match[2]),
           fullString: taskEntry  // 保留原始字符串
         });
       }
@@ -857,6 +863,7 @@ function lookupShangShe(shangSheId) {
         seq: globalTask ? globalTask.seq : 1,
         name: task.name,
         shangSheId: String(shangSheId).trim(),
+        content: task.content || '',
         fullString: `${globalTask ? globalTask.seq : 1}.${task.name}(${String(shangSheId).trim()})`
       });
     }
@@ -970,6 +977,105 @@ function generateGlobalTaskList(kb) {
     }
   }
   return taskList;
+}
+
+function findTaskContent(entry, taskName) {
+  if (!entry || !Array.isArray(entry.tasks) || !taskName) return '';
+  const task = entry.tasks.find(t => String(t.name || '').trim() === String(taskName || '').trim());
+  return task ? String(task.content || '').trim() : '';
+}
+
+const WORK_TYPE_RULES = [
+  { value: '保洁', pattern: /保洁|清洁|清扫|打扫|清洗|家政|卫生/ },
+  { value: '搬运', pattern: /搬运|装卸|分拣|理货|仓储|打包|包装|配送|快递|物流/ },
+  { value: '司机', pattern: /司机|驾驶|代驾|开车|车辆|运输/ },
+  { value: '客服', pattern: /客服|客户服务|呼叫|回访|咨询|售后/ },
+  { value: '销售', pattern: /销售|促销|推广|导购|营销|业务拓展/ },
+  { value: '技术', pattern: /技术|开发|软件|系统|运维|测试|信息|数据|网络|设计/ },
+  { value: '培训', pattern: /培训|讲师|授课|教学|辅导|教练/ },
+  { value: '翻译', pattern: /翻译|口译|笔译/ },
+  { value: '摄影', pattern: /摄影|摄像|拍摄|剪辑|视频|直播/ },
+  { value: '安保', pattern: /安保|保安|秩序|巡逻|门卫/ },
+  { value: '餐饮', pattern: /餐饮|厨师|后厨|配餐|服务员|洗碗/ },
+  { value: '文员', pattern: /文员|行政|助理|录入|文案|资料整理/ },
+  { value: '安装维修', pattern: /安装|维修|维护|检修|修理|装配/ }
+];
+
+function normalizeTaskNameToWorkType(taskName) {
+  let s = String(taskName || '').trim();
+  if (!s) return '';
+  s = s.replace(/^\d+\./, '').replace(/\([^)]*\)\s*$/, '').trim();
+  s = s.replace(/^(提供|从事|完成|开展)/, '').replace(/(类)?(服务|工作|任务|人员|岗位)$/g, '').trim();
+  return s || String(taskName || '').trim();
+}
+
+function inferWorkType(task, row, typeToCol) {
+  const rowTextParts = [];
+  if (row && typeToCol) {
+    ['note', 'clientName'].forEach(type => {
+      if (typeToCol[type] != null) rowTextParts.push(row[typeToCol[type]]);
+    });
+  }
+  const taskName = typeof task === 'string' ? task : (task?.name || '');
+  const taskContent = typeof task === 'string' ? '' : (task?.content || '');
+  const text = [...rowTextParts, taskContent, taskName].map(v => String(v || '')).join(' ');
+
+  for (const rule of WORK_TYPE_RULES) {
+    if (rule.pattern.test(text)) return rule.value;
+  }
+
+  const serviceMatch = text.match(/(?:提供|从事|完成|开展)([^，。,；;\s]{2,12}?)(?:服务|工作|任务)/);
+  if (serviceMatch && serviceMatch[1]) return normalizeTaskNameToWorkType(serviceMatch[1]);
+
+  return normalizeTaskNameToWorkType(taskName);
+}
+
+function parseTaskString(taskString) {
+  const match = String(taskString || '').match(/^\d+\.(.+)\((.+)\)$/);
+  return match ? { name: match[1], shangSheId: match[2], fullString: taskString } : null;
+}
+
+const BANK_LOCATION_NAMES = [
+  '北京','上海','天津','重庆','香港','澳门',
+  '广州','深圳','珠海','汕头','佛山','韶关','湛江','肇庆','江门','茂名','惠州','梅州','汕尾','河源','阳江','清远','东莞','中山','潮州','揭阳','云浮',
+  '杭州','宁波','温州','嘉兴','湖州','绍兴','金华','衢州','舟山','台州','丽水',
+  '南京','苏州','无锡','常州','南通','扬州','镇江','泰州','徐州','连云港','淮安','盐城','宿迁',
+  '福州','厦门','泉州','漳州','莆田','三明','南平','龙岩','宁德',
+  '长沙','株洲','湘潭','衡阳','邵阳','岳阳','常德','张家界','益阳','郴州','永州','怀化','娄底','湘西',
+  '武汉','黄石','十堰','宜昌','襄阳','鄂州','荆门','孝感','荆州','黄冈','咸宁','随州','恩施',
+  '郑州','开封','洛阳','平顶山','安阳','鹤壁','新乡','焦作','濮阳','许昌','漯河','三门峡','南阳','商丘','信阳','周口','驻马店','济源',
+  '合肥','芜湖','蚌埠','淮南','马鞍山','淮北','铜陵','安庆','黄山','滁州','阜阳','宿州','六安','亳州','池州','宣城',
+  '南昌','景德镇','萍乡','九江','新余','鹰潭','赣州','吉安','宜春','抚州','上饶',
+  '济南','青岛','淄博','枣庄','东营','烟台','潍坊','济宁','泰安','威海','日照','临沂','德州','聊城','滨州','菏泽',
+  '成都','自贡','攀枝花','泸州','德阳','绵阳','广元','遂宁','内江','乐山','南充','眉山','宜宾','广安','达州','雅安','巴中','资阳','阿坝','甘孜','凉山',
+  '西安','铜川','宝鸡','咸阳','渭南','延安','汉中','榆林','安康','商洛',
+  '沈阳','大连','鞍山','抚顺','本溪','丹东','锦州','营口','阜新','辽阳','盘锦','铁岭','朝阳','葫芦岛',
+  '长春','吉林','四平','辽源','通化','白山','松原','白城','延边',
+  '哈尔滨','齐齐哈尔','鸡西','鹤岗','双鸭山','大庆','伊春','佳木斯','七台河','牡丹江','黑河','绥化','大兴安岭',
+  '石家庄','唐山','秦皇岛','邯郸','邢台','保定','张家口','承德','沧州','廊坊','衡水',
+  '太原','大同','阳泉','长治','晋城','朔州','晋中','运城','忻州','临汾','吕梁',
+  '呼和浩特','包头','乌海','赤峰','通辽','鄂尔多斯','呼伦贝尔','巴彦淖尔','乌兰察布','兴安','锡林郭勒','阿拉善',
+  '南宁','柳州','桂林','梧州','北海','防城港','钦州','贵港','玉林','百色','贺州','河池','来宾','崇左',
+  '海口','三亚','三沙','儋州',
+  '贵阳','六盘水','遵义','安顺','毕节','铜仁','黔西南','黔东南','黔南',
+  '昆明','曲靖','玉溪','保山','昭通','丽江','普洱','临沧','楚雄','红河','文山','西双版纳','大理','德宏','怒江','迪庆',
+  '拉萨','日喀则','昌都','林芝','山南','那曲','阿里',
+  '兰州','嘉峪关','金昌','白银','天水','武威','张掖','平凉','酒泉','庆阳','定西','陇南','临夏','甘南',
+  '西宁','海东','海北','黄南','海南','果洛','玉树','海西',
+  '银川','石嘴山','吴忠','固原','中卫',
+  '乌鲁木齐','克拉玛依','吐鲁番','哈密','昌吉','博尔塔拉','巴音郭楞','阿克苏','克孜勒苏','喀什','和田','伊犁','塔城','阿勒泰'
+];
+
+const BANK_LOCATION_PROVINCES = ['河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆'];
+
+function inferBankLocationFromBranch(bankName) {
+  const raw = String(bankName || '').trim();
+  if (!raw) return '0';
+  const text = raw.replace(/中国|股份有限公司|有限责任公司|银行|信用社|农商行|支行|分行|营业部|营业厅|储蓄所|网点/g, '');
+  const city = BANK_LOCATION_NAMES.find(name => text.includes(name));
+  if (city) return city;
+  const province = BANK_LOCATION_PROVINCES.find(name => text.includes(name));
+  return province || '0';
 }
 
 // 生成配置表sheet数据
@@ -1576,9 +1682,12 @@ function showTemplateStep() {
   const container = document.getElementById('template-content');
   document.getElementById('step-template').classList.remove('hidden');
 
+  const selectedTemplates = getSelectedTemplates();
   let cardsHTML = '';
   for (const [key, tpl] of Object.entries(TEMPLATES)) {
-    cardsHTML += `<div class="template-card ${state.targetTemplate===key?'selected':''}" onclick="selectTemplate('${key}')">
+    const selected = selectedTemplates.includes(key);
+    cardsHTML += `<div class="template-card ${selected?'selected':''}" onclick="selectTemplate('${key}')">
+      <input class="multi-check" type="checkbox" ${selected?'checked':''} tabindex="-1">
       <div class="name">${tpl.icon} ${tpl.name}</div>
       <div class="fields">${tpl.desc}</div>
       ${key!=='custom'?`<div style="margin-top:8px;font-size:11px;color:var(--text2);">${tpl.headers.slice(0,6).join('、')}${tpl.headers.length>6?'…':''}</div>`:''}
@@ -1599,13 +1708,38 @@ function showTemplateStep() {
   }
 
   container.innerHTML = `<div class="template-grid">${cardsHTML}</div>${customHTML}
+    ${selectedTemplates.length > 1 ? `<div class="status-msg info">已选择 ${selectedTemplates.length} 个模版：${selectedTemplates.map(k => TEMPLATES[k].name).join('、')}。下一步先预览 ${TEMPLATES[state.targetTemplate].name}，导出时可一次导出全部所选模版。</div>` : ''}
     <div class="btn-row">
-      <button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="confirmTemplate()" ${!state.targetTemplate?'disabled':''}>${state.targetTemplate==='custom'?'✅ 映射自定义列':'✅ 生成转换结果'}</button>
+      <button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="confirmTemplate()" ${!selectedTemplates.length?'disabled':''}>${state.targetTemplate==='custom'?'✅ 映射自定义列':'✅ 生成转换结果'}</button>
       <button class="btn btn-secondary" onclick="goBack('step-template')">⬅️ 返回</button>
     </div>`;
 }
 
-function selectTemplate(key) { state.targetTemplate = key; showTemplateStep(); }
+function getSelectedTemplates() {
+  if (Array.isArray(state.selectedTemplates) && state.selectedTemplates.length) return state.selectedTemplates;
+  return state.targetTemplate ? [state.targetTemplate] : [];
+}
+
+function selectTemplate(key) {
+  if (key === 'custom') {
+    state.selectedTemplates = ['custom'];
+    state.targetTemplate = 'custom';
+    showTemplateStep();
+    return;
+  }
+
+  let selected = getSelectedTemplates().filter(k => k !== 'custom');
+  if (selected.includes(key)) {
+    selected = selected.filter(k => k !== key);
+  } else {
+    selected.push(key);
+  }
+
+  state.selectedTemplates = selected;
+  state.targetTemplate = selected.includes(state.targetTemplate) ? state.targetTemplate : (selected[0] || null);
+  if (selected.includes(key)) state.targetTemplate = key;
+  showTemplateStep();
+}
 function addCF() {
   const input = document.getElementById('cf-input');
   const v = input.value.trim();
@@ -1615,7 +1749,10 @@ function rmCF(i) { state.customFields.splice(i,1); showTemplateStep(); }
 function goBack(id) { document.getElementById(id).classList.add('hidden'); }
 
 function confirmTemplate() {
-  if (!state.targetTemplate) { alert('请选择模版'); return; }
+  const selectedTemplates = getSelectedTemplates();
+  if (!selectedTemplates.length) { alert('请选择模版'); return; }
+  state.selectedTemplates = selectedTemplates;
+  state.targetTemplate = state.targetTemplate || selectedTemplates[0];
   if (state.targetTemplate === 'custom' && !state.customFields.length) { alert('请添加列名'); return; }
   generateOutput();
 }
@@ -1675,14 +1812,21 @@ function generateOutput() {
         if (state.targetTemplate === 'youyi') {
           const taxIdx = tpl.headers.indexOf('个税金额');
           const insuranceIdx = tpl.headers.indexOf('商业保险');
+          const bankNameIdx = tpl.headers.indexOf('银行名称');
+          const bankLocationIdx = tpl.headers.indexOf('银行所属地');
           if (taxIdx >= 0) out[taxIdx] = '0';
           if (insuranceIdx >= 0) out[insuranceIdx] = '0';
+          if (bankLocationIdx >= 0 && !out[bankLocationIdx]) {
+            out[bankLocationIdx] = inferBankLocationFromBranch(bankNameIdx >= 0 ? out[bankNameIdx] : '');
+          }
         }
       }
       outputRows.push(out);
       outputRowMeta.push({
         fileName: source?.fileName || '',
-        sheetName: source?.sheetName || ''
+        sheetName: source?.sheetName || '',
+        rawRow: row,
+        typeToCol
       });
     });
   });
@@ -1807,7 +1951,7 @@ function generateOutput() {
     state.shangSheCandidates = candidates;
 
     // 填充商社信息的辅助函数
-    function fillShangSheInfo(out, lookup) {
+    function fillShangSheInfo(out, lookup, rowContext) {
       if (!lookup) return false;
       // 自动填充平台
       if (platformIdx >= 0 && !out[platformIdx] && lookup.platform) {
@@ -1826,7 +1970,7 @@ function generateOutput() {
           out[taskListIdx] = firstTask.fullString;
         }
         if (workTypeIdx >= 0 && !out[workTypeIdx]) {
-          out[workTypeIdx] = firstTask.name;
+          out[workTypeIdx] = inferWorkType(firstTask, rowContext?.rawRow, rowContext?.typeToCol);
         }
       }
       // 如果商社编号列为空，也填充商社编号
@@ -1844,13 +1988,14 @@ function generateOutput() {
     }
 
     outputRows.forEach((out, rowIdx) => {
+      const rowContext = outputRowMeta[rowIdx] || {};
       const shangSheId = shangSheIdx >= 0 ? out[shangSheIdx] : '';
       if (shangSheId) {
         const lookup = lookupShangShe(shangSheId);
-        if (lookup) { fillShangSheInfo(out, lookup); return; }
+        if (lookup) { fillShangSheInfo(out, lookup, rowContext); return; }
       }
       if (bestLookup) {
-        fillShangSheInfo(out, bestLookup);
+        fillShangSheInfo(out, bestLookup, rowContext);
         return;
       }
       unmatchedRows.push(rowIdx);
@@ -2166,8 +2311,14 @@ function showExportStep() {
     </div>`;
   }
 
+  const selectedExportTemplates = getSelectedTemplates().filter(k => k !== 'custom');
+  const multiExportHTML = selectedExportTemplates.length > 1
+    ? `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="exportSelectedExcel()">📦 批量导出所选模版 Excel（${selectedExportTemplates.length} 个）</button>`
+    : '';
+
   container.innerHTML = `
     <div class="status-msg success">✅ 转换完成 — ${tplName}（${rows.length} 行）</div>
+    ${selectedExportTemplates.length > 1 ? `<div class="status-msg info">本次已选择：${selectedExportTemplates.map(k => TEMPLATES[k].name).join('、')}。当前表格预览为 ${tplName}。</div>` : ''}
     ${kbMatchHTML}
     ${manualShangSheHTML}
     ${state.cleanCount > 0 ? `<div class="status-msg info">🧹 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
@@ -2177,6 +2328,7 @@ function showExportStep() {
       <table class="result-table"><thead><tr>${headHTML}</tr></thead><tbody>${bodyHTML}</tbody></table>
     </div>
     <div class="btn-row">
+      ${multiExportHTML}
       <button class="btn btn-green" style="flex:1;padding:12px;font-size:15px;" onclick="exportExcel()">📥 导出 Excel（可选保存位置）</button>
       <button class="btn btn-secondary" onclick="exportCSV()">📥 导出 CSV</button>
       <button class="btn btn-secondary" onclick="goBack('step-export')">⬅️ 返回</button>
@@ -2196,6 +2348,7 @@ function showExportStep() {
 function getTasksForShangShe(shangSheId) {
   if (!shangSheId) return [];
   const kb = loadKB();
+  const entry = kb.shangSheMap[String(shangSheId).trim()];
   let matchedTasks = [];
 
   // 优先从taskListData查找
@@ -2207,6 +2360,7 @@ function getTasksForShangShe(shangSheId) {
           seq: parseInt(match[1]),
           name: match[2],
           shangSheId: match[3],
+          content: findTaskContent(entry, match[2]),
           fullString: taskEntry
         });
       }
@@ -2215,7 +2369,6 @@ function getTasksForShangShe(shangSheId) {
 
   // 回退到KB的tasks
   if (matchedTasks.length === 0) {
-    const entry = kb.shangSheMap[String(shangSheId).trim()];
     if (entry && entry.tasks && entry.tasks.length > 0) {
       const globalTasks = generateGlobalTaskList(kb);
       for (const task of entry.tasks) {
@@ -2224,6 +2377,7 @@ function getTasksForShangShe(shangSheId) {
           seq: globalTask ? globalTask.seq : 1,
           name: task.name,
           shangSheId: String(shangSheId).trim(),
+          content: task.content || '',
           fullString: `${globalTask ? globalTask.seq : 1}.${task.name}(${String(shangSheId).trim()})`
         });
       }
@@ -2254,12 +2408,13 @@ function onTaskChange(selectEl, rowIdx) {
   const newVal = selectEl.value;
   state.outputRows[rowIdx][6] = newVal; // 更新任务清单列
 
-  // 从任务字符串中提取任务名称，更新工种（column 8）
+  // 根据任务名称、服务内容和源行备注推断工种（column 8）
   if (newVal) {
-    const match = newVal.match(/^\d+\.(.+)\(.+\)$/);
-    if (match) {
-      state.outputRows[rowIdx][8] = match[1];
-    }
+    const parsed = parseTaskString(newVal);
+    const shangSheId = parsed?.shangSheId || state.outputRows[rowIdx][2] || '';
+    const task = getTasksForShangShe(shangSheId).find(t => t.fullString === newVal) || parsed || newVal;
+    const rowContext = state.outputRowMeta?.[rowIdx] || {};
+    state.outputRows[rowIdx][8] = inferWorkType(task, rowContext.rawRow, rowContext.typeToCol);
   }
 }
 
@@ -2335,7 +2490,8 @@ function applyManualShangShe() {
         out[taskListIdx] = firstTask.fullString;
       }
       if (workTypeIdx >= 0 && !out[workTypeIdx]) {
-        out[workTypeIdx] = firstTask.name;
+        const rowContext = state.outputRowMeta?.[rowIdx] || {};
+        out[workTypeIdx] = inferWorkType(firstTask, rowContext.rawRow, rowContext.typeToCol);
       }
     }
   });
@@ -2698,14 +2854,67 @@ async function exportExcel() {
   const fileName = getExportFileName('xlsx');
 
   if (state.targetTemplate === 'yidao') {
-    await exportYidao(headers, rows, fileName);
+    return await exportYidao(headers, rows, fileName);
   } else if (state.targetTemplate === 'shenbianyun') {
-    await exportShenbianyun(headers, rows, fileName);
+    return await exportShenbianyun(headers, rows, fileName);
   } else if (state.targetTemplate === 'youyi') {
-    await exportYouyi(headers, rows, fileName);
+    return await exportYouyi(headers, rows, fileName);
   } else {
-    await exportGeneric(headers, rows, fileName);
+    return await exportGeneric(headers, rows, fileName);
   }
+}
+
+async function exportSelectedExcel() {
+  const selectedTemplates = getSelectedTemplates().filter(k => k !== 'custom');
+  if (selectedTemplates.length <= 1) {
+    await exportExcel();
+    return;
+  }
+
+  const snapshot = {
+    targetTemplate: state.targetTemplate,
+    outputHeaders: state.outputHeaders ? [...state.outputHeaders] : null,
+    outputRows: state.outputRows ? state.outputRows.map(r => [...r]) : null,
+    outputRowMeta: state.outputRowMeta ? state.outputRowMeta.map(m => ({ ...m })) : [],
+    cleanCount: state.cleanCount,
+    unmatchedRows: [...(state.unmatchedRows || [])],
+    shangSheCandidates: [...(state.shangSheCandidates || [])],
+    selectedNoteRows: [...(state.selectedNoteRows || [])],
+    previewRowLimit: state.previewRowLimit
+  };
+
+  let exportedCount = 0;
+  for (const templateKey of selectedTemplates) {
+    state.targetTemplate = templateKey;
+    if (templateKey === snapshot.targetTemplate && snapshot.outputRows) {
+      state.outputHeaders = snapshot.outputHeaders.map(h => h);
+      state.outputRows = snapshot.outputRows.map(r => [...r]);
+      state.outputRowMeta = snapshot.outputRowMeta.map(m => ({ ...m }));
+      state.cleanCount = snapshot.cleanCount;
+      state.unmatchedRows = [...snapshot.unmatchedRows];
+      state.shangSheCandidates = [...snapshot.shangSheCandidates];
+      state.selectedNoteRows = [...snapshot.selectedNoteRows];
+      state.previewRowLimit = snapshot.previewRowLimit;
+    } else {
+      generateOutput();
+    }
+    const saved = await exportExcel();
+    if (saved) exportedCount++;
+  }
+
+  Object.assign(state, {
+    targetTemplate: snapshot.targetTemplate,
+    outputHeaders: snapshot.outputHeaders,
+    outputRows: snapshot.outputRows,
+    outputRowMeta: snapshot.outputRowMeta,
+    cleanCount: snapshot.cleanCount,
+    unmatchedRows: snapshot.unmatchedRows,
+    shangSheCandidates: snapshot.shangSheCandidates,
+    selectedNoteRows: snapshot.selectedNoteRows,
+    previewRowLimit: snapshot.previewRowLimit
+  });
+  showExportStep();
+  if (exportedCount > 0) alert(`已导出 ${exportedCount} 个模版文件`);
 }
 
 // 移步到岗: 1 header row + data rows
@@ -2719,7 +2928,7 @@ async function exportYidao(headers, rows, fileName) {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '智能模板');
-  await saveWorkbook(wb, fileName);
+  return await saveWorkbook(wb, fileName);
 }
 
 // 身边云: Row1=instructions(merged), Row2=batch info, Row3=empty, Row4=header, Row5+=data
@@ -2741,7 +2950,7 @@ async function exportShenbianyun(headers, rows, fileName) {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '个人银行账户批量付款模板');
-  await saveWorkbook(wb, fileName);
+  return await saveWorkbook(wb, fileName);
 }
 
 // 云杉公司: 从头生成费用明细 + 动态生成配置表和任务清单
@@ -2771,7 +2980,7 @@ async function exportYouyi(headers, rows, fileName) {
   taskWs['!cols'] = [{ wch: 40 }];
   XLSX.utils.book_append_sheet(wb, taskWs, '任务清单');
 
-  await saveWorkbook(wb, fileName);
+  return await saveWorkbook(wb, fileName);
 }
 
 // Generic: just headers + data
@@ -2785,7 +2994,7 @@ async function exportGeneric(headers, rows, fileName) {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '数据');
-  await saveWorkbook(wb, fileName);
+  return await saveWorkbook(wb, fileName);
 }
 
 async function exportCSV() {
@@ -2803,7 +3012,7 @@ async function exportCSV() {
 function resetAll() {
   Object.assign(state, {
     sources: [], previewSourceId: '', pendingFiles: 0, accumFileCount: 0,
-    mappingState: null, targetTemplate: null, customFields: [],
+    mappingState: null, targetTemplate: null, selectedTemplates: [], customFields: [],
     outputRows: null, outputHeaders: null, outputRowMeta: [], selectedNoteRows: [], previewRowLimit: DEFAULT_PREVIEW_ROW_LIMIT, templateFiles: {}, cleanCount: 0,
     unmatchedRows: [], shangSheCandidates: [],
   });

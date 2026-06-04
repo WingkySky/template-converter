@@ -302,6 +302,8 @@ const state = {
   unmatchedRows: [],
   // 缩小范围的候选商社（供手动选择器使用）
   shangSheCandidates: [],
+  // 记住上次保存文件的目录
+  lastSaveDir: null,
 };
 
 // ==================== 知识库 (Knowledge Base) ====================
@@ -3135,10 +3137,14 @@ function getBatchNoForTemplate(templateKey) {
 async function saveWorkbook(wb, defaultName) {
   if (window.showSaveFilePicker) {
     try {
-      const handle = await window.showSaveFilePicker({
+      const opts = {
         suggestedName: defaultName,
         types: [{ description: 'Excel 文件', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }],
-      });
+      };
+      if (state.lastSaveDir) opts.startIn = state.lastSaveDir;
+      const handle = await window.showSaveFilePicker(opts);
+      // 记住本次保存的目录
+      state.lastSaveDir = handle;
       const writable = await handle.createWritable();
       const data = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
       await writable.write(data);
@@ -3160,10 +3166,13 @@ async function saveWorkbook(wb, defaultName) {
 async function saveCSV(csvContent, defaultName) {
   if (window.showSaveFilePicker) {
     try {
-      const handle = await window.showSaveFilePicker({
+      const opts = {
         suggestedName: defaultName,
         types: [{ description: 'CSV 文件', accept: { 'text/csv': ['.csv'] } }],
-      });
+      };
+      if (state.lastSaveDir) opts.startIn = state.lastSaveDir;
+      const handle = await window.showSaveFilePicker(opts);
+      state.lastSaveDir = handle;
       const writable = await handle.createWritable();
       await writable.write(csvContent);
       await writable.close();
@@ -3185,10 +3194,13 @@ async function saveCSV(csvContent, defaultName) {
 async function saveBlobAsFile(blob, defaultName, description, accept) {
   if (window.showSaveFilePicker) {
     try {
-      const handle = await window.showSaveFilePicker({
+      const opts = {
         suggestedName: defaultName,
         types: [{ description, accept }],
-      });
+      };
+      if (state.lastSaveDir) opts.startIn = state.lastSaveDir;
+      const handle = await window.showSaveFilePicker(opts);
+      state.lastSaveDir = handle;
       const writable = await handle.createWritable();
       await writable.write(blob);
       await writable.close();

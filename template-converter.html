@@ -160,6 +160,23 @@
     border-radius: 4px; padding: 4px 6px; color: var(--text);
     font-size: 12px; max-width: 160px;
   }
+  .result-table input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+  .note-input {
+    width: 180px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 7px; color: var(--text); font-size: 12px; outline: none;
+  }
+  .note-input:focus { border-color: var(--accent); }
+  .note-toolbar {
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center;
+    gap: 10px; flex-wrap: wrap;
+  }
+  .note-toolbar select, .note-toolbar input {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 6px;
+    padding: 7px 10px; color: var(--text); font-size: 13px; outline: none;
+  }
+  .note-toolbar input { min-width: 220px; }
+  .note-toolbar select:focus, .note-toolbar input:focus { border-color: var(--accent); }
   .ss-dropdown-item { padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border); }
   .ss-dropdown-item:hover { background:rgba(108,92,231,0.1); }
   .ss-dropdown-item .ss-id { color:var(--accent2);font-weight:600; }
@@ -202,9 +219,9 @@
       <button class="btn btn-orange btn-sm" onclick="downloadKBSample()">📄 下载样例文件</button>
       <button class="btn btn-secondary btn-sm" onclick="document.getElementById('kb-config-upload-input').click()">🔄 更新配置数据</button>
       <input type="file" id="kb-config-upload-input" accept=".xlsx,.xls" style="display:none;" onchange="handleKBConfigUpload(event)">
-      <button class="btn btn-secondary" onclick="exportKBToJSON()">💾 导出备份</button>
+      <button class="btn btn-secondary" onclick="exportKBToExcel()">💾 导出备份</button>
       <button class="btn btn-secondary" onclick="document.getElementById('kb-import-input').click()">📥 导入备份</button>
-      <input type="file" id="kb-import-input" accept=".json" style="display:none;" onchange="handleKBImport(event)">
+      <input type="file" id="kb-import-input" accept=".xlsx,.xls,.json" style="display:none;" onchange="handleKBImport(event)">
       <button class="btn btn-red btn-sm" onclick="clearKB()">🗑️ 清空知识库</button>
     </div>
   </div>
@@ -263,6 +280,8 @@ const state = {
   customFields: [],
   outputRows: null,
   outputHeaders: null,
+  outputRowMeta: [],
+  selectedNoteRows: [],
   cleanCount: 0,
   // Template file data (ArrayBuffer) for preservation-based export
   templateFiles: {},
@@ -388,22 +407,133 @@ function clearKB() {
   updateKBStatus();
 }
 
-// 导出知识库为JSON文件
-function exportKBToJSON() {
+const KB_MAIN_HEADERS = ['商社编号','商社简称','商社全称','一级业务类型','二级业务类型','纳税人识别号','签约费率','签约主体','任务名称','服务内容'];
+
+function mergeKnowledgeRows(rows, kb) {
+  let newCount = 0, updateCount = 0;
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const shangSheId = String(row[0] || '').trim();
+    if (!shangSheId) continue;
+
+    const shortName = String(row[1] || '').trim();
+    const fullName = String(row[2] || '').trim();
+    const taxId = String(row[5] || '').trim();
+    const feeRateRaw = String(row[6] || '').trim();
+    const feeRate = parseFloat(feeRateRaw) || 0;
+    const signEntity = String(row[7] || '').trim();
+    const taskName = String(row[8] || '').trim();
+    const taskContent = String(row[9] || '').trim();
+
+    if (kb.shangSheMap[shangSheId]) {
+      const entry = kb.shangSheMap[shangSheId];
+      if (!Array.isArray(entry.tasks)) entry.tasks = [];
+      if (shortName) entry.shortName = shortName;
+      if (fullName) entry.fullName = fullName;
+      if (taxId) entry.taxId = taxId;
+      if (feeRateRaw) entry.feeRate = feeRate;
+      if (signEntity) entry.signEntity = signEntity;
+      if (taskName) {
+        const exists = entry.tasks.some(t => t.name === taskName && (t.content || '') === taskContent);
+        if (!exists) entry.tasks.push({ name: taskName, content: taskContent });
+      }
+      updateCount++;
+    } else {
+      const entry = {
+        id: shangSheId,
+        shortName: shortName,
+        fullName: fullName,
+        taxId: taxId,
+        feeRate: feeRate,
+        signEntity: signEntity,
+        tasks: []
+      };
+      if (taskName) entry.tasks.push({ name: taskName, content: taskContent });
+      kb.shangSheMap[shangSheId] = entry;
+      newCount++;
+    }
+  }
+
+  return { newCount, updateCount };
+}
+
+function knowledgeRowsFromKB(kb) {
+  const rows = [KB_MAIN_HEADERS];
+  for (const entry of Object.values(kb.shangSheMap)) {
+    const tasks = Array.isArray(entry.tasks) && entry.tasks.length > 0 ? entry.tasks : [{ name: '', content: '' }];
+    for (const task of tasks) {
+      rows.push([
+        entry.id || '',
+        entry.shortName || '',
+        entry.fullName || '',
+        '',
+        '',
+        entry.taxId || '',
+        entry.feeRate ?? '',
+        entry.signEntity || '',
+        task.name || '',
+        task.content || ''
+      ]);
+    }
+  }
+  return rows;
+}
+
+function applyConfigSheetRows(rows, kb) {
+  if (rows.length < 2) return;
+  const taxSources = [];
+  const platforms = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const taxVal = String(row[0] || '').trim();
+    const platVal = String(row[1] || '').trim();
+    if (taxVal) taxSources.push(taxVal);
+    if (platVal) platforms.push(platVal);
+  }
+  if (taxSources.length > 0 || platforms.length > 0) {
+    kb.configData = { taxSources, platforms };
+  }
+}
+
+function applyTaskListSheetRows(rows, kb) {
+  if (rows.length < 2) return;
+  const taskEntries = [];
+  for (let i = 1; i < rows.length; i++) {
+    const entry = String((rows[i] || [])[0] || '').trim();
+    if (entry) taskEntries.push(entry);
+  }
+  if (taskEntries.length > 0) {
+    kb.taskListData = taskEntries;
+  }
+}
+
+// 导出知识库为Excel备份文件（用户看到中文列名，内部仍保存JSON结构）
+function exportKBToExcel() {
   const kb = loadKB();
   const count = Object.keys(kb.shangSheMap).length;
   if (count === 0) {
     alert('知识库为空，无法导出');
     return;
   }
-  const jsonStr = JSON.stringify(kb, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+
+  const wb = XLSX.utils.book_new();
+  const mainWs = XLSX.utils.aoa_to_sheet(knowledgeRowsFromKB(kb));
+  mainWs['!cols'] = [
+    {wch:12},{wch:22},{wch:30},{wch:12},{wch:18},{wch:22},{wch:10},{wch:28},{wch:16},{wch:50}
+  ];
+  XLSX.utils.book_append_sheet(wb, mainWs, '知识库');
+
+  const configWs = XLSX.utils.aoa_to_sheet(generateConfigSheet(kb));
+  configWs['!cols'] = [{ wch: 20 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, configWs, '配置表');
+
+  const taskWs = XLSX.utils.aoa_to_sheet(generateTaskListSheet(kb));
+  taskWs['!cols'] = [{ wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, taskWs, '任务清单');
+
   const d = new Date();
-  a.download = `知识库备份_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  XLSX.writeFile(wb, `知识库备份_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.xlsx`);
 }
 
 // 从JSON字符串导入知识库（合并逻辑：新数据覆盖旧数据）
@@ -434,6 +564,38 @@ function importKBFromJSON(jsonStr) {
   }
   saveKB(currentKB);
   return true;
+}
+
+function importKBFromWorkbook(wb) {
+  const kb = loadKB();
+  const mainSheetName = wb.SheetNames.find(n => n.includes('知识库')) || wb.SheetNames[0];
+  if (!mainSheetName) {
+    alert('Excel文件中未找到知识库工作表');
+    return null;
+  }
+
+  const mainRows = XLSX.utils.sheet_to_json(wb.Sheets[mainSheetName], { header: 1, raw: false });
+  if (mainRows.length < 2) {
+    alert('知识库文件数据不足（至少需要表头+1行数据）');
+    return null;
+  }
+
+  const result = mergeKnowledgeRows(mainRows, kb);
+
+  const configSheetName = wb.SheetNames.find(n => n.includes('配置表'));
+  if (configSheetName) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[configSheetName], { header: 1, raw: false });
+    applyConfigSheetRows(rows, kb);
+  }
+
+  const taskSheetName = wb.SheetNames.find(n => n.includes('任务清单'));
+  if (taskSheetName) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[taskSheetName], { header: 1, raw: false });
+    applyTaskListSheetRows(rows, kb);
+  }
+
+  saveKB(kb);
+  return result;
 }
 
 // 下载知识库样例文件
@@ -471,60 +633,8 @@ function handleKBUpload(event) {
         return;
       }
 
-      // 跳过表头行(row 0)，解析数据行
-      // 列: 0-商社编号, 1-商社简称, 2-商社全称, 3-一级业务类型, 4-二级业务类型,
-      //     5-纳税人识别号, 6-签约费率, 7-签约主体, 8-任务名称, 9-服务内容
       const kb = loadKB();
-      let newCount = 0, updateCount = 0;
-
-      for (let i = 1; i < rows.length; i++) {
-        const row = rows[i] || [];
-        const shangSheId = String(row[0] || '').trim();
-        if (!shangSheId) continue; // 跳过无商社编号的行
-
-        const shortName = String(row[1] || '').trim();
-        const fullName = String(row[2] || '').trim();
-        const taxId = String(row[5] || '').trim();
-        const feeRate = parseFloat(row[6]) || 0;
-        const signEntity = String(row[7] || '').trim();
-        const taskName = String(row[8] || '').trim();
-        const taskContent = String(row[9] || '').trim();
-
-        // 如果该商社已存在，更新基本信息并追加任务
-        if (kb.shangSheMap[shangSheId]) {
-          const entry = kb.shangSheMap[shangSheId];
-          // 更新基本信息（新数据覆盖旧数据）
-          if (shortName) entry.shortName = shortName;
-          if (fullName) entry.fullName = fullName;
-          if (taxId) entry.taxId = taxId;
-          if (feeRate) entry.feeRate = feeRate;
-          if (signEntity) entry.signEntity = signEntity;
-          // 追加任务（如果任务名不为空且不重复）
-          if (taskName) {
-            const exists = entry.tasks.some(t => t.name === taskName);
-            if (!exists) {
-              entry.tasks.push({ name: taskName, content: taskContent });
-            }
-          }
-          updateCount++;
-        } else {
-          // 新建商社条目
-          const entry = {
-            id: shangSheId,
-            shortName: shortName,
-            fullName: fullName,
-            taxId: taxId,
-            feeRate: feeRate,
-            signEntity: signEntity,
-            tasks: []
-          };
-          if (taskName) {
-            entry.tasks.push({ name: taskName, content: taskContent });
-          }
-          kb.shangSheMap[shangSheId] = entry;
-          newCount++;
-        }
-      }
+      const { newCount, updateCount } = mergeKnowledgeRows(rows, kb);
 
       saveKB(kb);
       const total = Object.keys(kb.shangSheMap).length;
@@ -539,20 +649,36 @@ function handleKBUpload(event) {
   event.target.value = '';
 }
 
-// 处理JSON备份导入
+// 处理知识库备份导入（优先Excel，兼容旧JSON备份）
 function handleKBImport(event) {
   const file = event.target.files[0];
   if (!file) return;
+  const ext = file.name.split('.').pop().toLowerCase();
   const reader = new FileReader();
   reader.onload = function(e) {
-    const jsonStr = e.target.result;
-    if (importKBFromJSON(jsonStr)) {
-      const kb = loadKB();
-      const count = Object.keys(kb.shangSheMap).length;
-      alert(`知识库导入成功！当前共 ${count} 个商社`);
+    try {
+      let result = null;
+      if (ext === 'json') {
+        result = importKBFromJSON(e.target.result) ? { newCount: 0, updateCount: 0 } : null;
+      } else {
+        const wb = XLSX.read(e.target.result, { type: 'array' });
+        result = importKBFromWorkbook(wb);
+      }
+      if (result) {
+        const kb = loadKB();
+        const count = Object.keys(kb.shangSheMap).length;
+        alert(`知识库导入成功！\n新增 ${result.newCount} 个商社，更新 ${result.updateCount} 条记录\n当前共 ${count} 个商社`);
+      }
+    } catch (err) {
+      console.error('导入知识库备份失败:', err);
+      alert('导入知识库备份失败：' + err.message);
     }
   };
-  reader.readAsText(file, 'utf-8');
+  if (ext === 'json') {
+    reader.readAsText(file, 'utf-8');
+  } else {
+    reader.readAsArrayBuffer(file);
+  }
   event.target.value = '';
 }
 
@@ -1433,7 +1559,7 @@ function confirmMapping() {
       Object.entries(src.analysis.autoMap.cols).forEach(([ci, col]) => { if (col.type) typeToCol[col.type] = Number(ci); });
     }
 
-    sourcesData.push({ dataRows, typeToCol });
+    sourcesData.push({ dataRows, typeToCol, source: src });
   });
 
   if (!sourcesData.length) { alert('没有有效数据行'); return; }
@@ -1505,8 +1631,9 @@ function generateOutput() {
 
   // Generate output rows using per-source column mappings
   const outputRows = [];
+  const outputRowMeta = [];
   let cleanCount = 0;
-  sourcesData.forEach(({ dataRows, typeToCol }) => {
+  sourcesData.forEach(({ dataRows, typeToCol, source }) => {
     // Build source-type → dest-column mapping for this source
     const srcToDest = {};
     for (const [type, destName] of Object.entries(tpl.fieldMap)) {
@@ -1549,6 +1676,10 @@ function generateOutput() {
         }
       }
       outputRows.push(out);
+      outputRowMeta.push({
+        fileName: source?.fileName || '',
+        sheetName: source?.sheetName || ''
+      });
     });
   });
 
@@ -1725,9 +1856,11 @@ function generateOutput() {
   // 身边云: do NOT auto-fill merchant order number (leave empty per user request)
 
   state.outputRows = outputRows;
+  state.outputRowMeta = outputRowMeta;
   state.outputHeaders = tpl.headers;
   state.cleanCount = cleanCount;
   state.unmatchedRows = unmatchedRows;
+  state.selectedNoteRows = [];
   showExportStep();
 }
 
@@ -1760,8 +1893,9 @@ function genCustom() {
 
   state.outputHeaders = state.customFields;
   state.outputRows = [];
+  state.outputRowMeta = [];
   let cleanCount = 0;
-  sourcesData.forEach(({ dataRows, typeToCol }) => {
+  sourcesData.forEach(({ dataRows, typeToCol, source }) => {
     dataRows.forEach(row => {
       const out = new Array(state.customFields.length).fill('');
       for (const [fi, type] of Object.entries(fmap)) {
@@ -1774,9 +1908,14 @@ function genCustom() {
       }
       if (!out.some(v => v)) return;
       state.outputRows.push(out);
+      state.outputRowMeta.push({
+        fileName: source?.fileName || '',
+        sheetName: source?.sheetName || ''
+      });
     });
   });
   state.cleanCount = cleanCount;
+  state.selectedNoteRows = [];
   showExportStep();
 }
 
@@ -1833,6 +1972,9 @@ function showExportStep() {
   const rows = state.outputRows;
   const tplName = state.targetTemplate === 'custom' ? '自定义' : TEMPLATES[state.targetTemplate].name;
   const unmatchedSet = new Set(state.unmatchedRows || []);
+  const noteColIdx = headers.findIndex(h => /备注|note|说明|remark/i.test(String(h || '')));
+  const hasNoteColumn = noteColIdx >= 0;
+  const selectedNoteSet = new Set(state.selectedNoteRows || []);
 
   // 云杉模版：找到商社编号列索引用于高亮
   const shangSheColIdx = (state.targetTemplate === 'youyi') ? headers.indexOf('商社编号') : -1;
@@ -1867,11 +2009,19 @@ function showExportStep() {
 
   const pv = Math.min(rows.length, 8);
   let headHTML = headers.map(h=>`<th>${h}</th>`).join('');
+  if (hasNoteColumn) {
+    const allVisibleSelected = visiblePreviewRowCount() > 0 && Array.from({ length: visiblePreviewRowCount() }, (_, i) => i).every(i => selectedNoteSet.has(i));
+    headHTML = `<th style="width:44px;text-align:center;"><input type="checkbox" title="选择当前预览行" ${allVisibleSelected ? 'checked' : ''} onchange="toggleVisibleNoteRows(this.checked)"></th>` + headHTML;
+  }
   let bodyHTML = '';
   for (let ri = 0; ri < pv; ri++) {
     const isUnmatched = unmatchedSet.has(ri);
     const rowClass = isUnmatched ? ' class="unmatched-row"' : '';
-    bodyHTML += `<tr${rowClass}>` + rows[ri].map((c, ci) => {
+    let rowHTML = '';
+    if (hasNoteColumn) {
+      rowHTML += `<td style="text-align:center;"><input type="checkbox" ${selectedNoteSet.has(ri) ? 'checked' : ''} onchange="toggleNoteRow(${ri}, this.checked)"></td>`;
+    }
+    rowHTML += rows[ri].map((c, ci) => {
       let cellContent = c || '<span style="color:var(--text2);opacity:0.4;">—</span>';
 
       // 云杉模版：平台列（column 1）显示下拉框
@@ -1907,10 +2057,15 @@ function showExportStep() {
       else if (isUnmatched && ci === shangSheColIdx && c) {
         cellContent = c + '<span class="unmatched-badge">未匹配</span>';
       }
+      // 备注列：允许单行直接编辑
+      else if (ci === noteColIdx) {
+        cellContent = `<input class="note-input" value="${escapeHTML(c || '')}" placeholder="填写备注" oninput="onNoteChange(this, ${ri})">`;
+      }
       return `<td>${cellContent}</td>`;
-    }).join('') + '</tr>';
+    }).join('');
+    bodyHTML += `<tr${rowClass}>${rowHTML}</tr>`;
   }
-  if (rows.length > pv) bodyHTML += `<tr><td colspan="${headers.length}" style="text-align:center;color:var(--text2);font-size:12px;">… 还有 ${rows.length-pv} 行</td></tr>`;
+  if (rows.length > pv) bodyHTML += `<tr><td colspan="${headers.length + (hasNoteColumn ? 1 : 0)}" style="text-align:center;color:var(--text2);font-size:12px;">… 还有 ${rows.length-pv} 行</td></tr>`;
 
   // 云杉模版：显示知识库匹配统计
   let kbMatchHTML = '';
@@ -1969,12 +2124,37 @@ function showExportStep() {
     </div>`;
   }
 
+  let noteControlsHTML = '';
+  if (hasNoteColumn && rows.length > 0) {
+    noteControlsHTML = `
+    <div class="note-toolbar">
+      <span style="font-size:13px;font-weight:600;color:var(--text2);">批量备注:</span>
+      <button class="btn btn-secondary btn-sm" onclick="selectVisibleNoteRows()">选择当前预览</button>
+      <button class="btn btn-secondary btn-sm" onclick="selectAllNoteRows()">全选全部记录</button>
+      <button class="btn btn-secondary btn-sm" onclick="clearNoteRowSelection()">清除选择</button>
+      <span style="font-size:12px;color:var(--text2);">已选 <strong style="color:var(--accent2);">${selectedNoteSet.size}</strong> 行</span>
+      <select id="note-preset" onchange="onNotePresetChange()">
+        <option value="filename">文件名</option>
+        <option value="date">日期</option>
+        <option value="shangshe">商社简称</option>
+        <option value="custom">自定义</option>
+      </select>
+      <input id="note-custom-text" class="hidden" placeholder="输入自定义备注">
+      <select id="note-write-mode" title="写入方式">
+        <option value="replace">覆盖备注</option>
+        <option value="append">追加备注</option>
+      </select>
+      <button class="btn btn-primary btn-sm" onclick="applyBatchRemark()">应用备注</button>
+    </div>`;
+  }
+
   container.innerHTML = `
     <div class="status-msg success">✅ 转换完成 — ${tplName}（${rows.length} 行）</div>
     ${kbMatchHTML}
     ${manualShangSheHTML}
     ${state.cleanCount > 0 ? `<div class="status-msg info">🧹 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
     ${batchControlsHTML}
+    ${noteControlsHTML}
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px;">
       <table class="result-table"><thead><tr>${headHTML}</tr></thead><tbody>${bodyHTML}</tbody></table>
     </div>
@@ -2146,6 +2326,121 @@ function applyManualShangShe() {
   state.unmatchedRows = state.unmatchedRows.filter(rowIdx => !unmatchedSet.has(rowIdx));
 
   // 刷新预览
+  showExportStep();
+}
+
+function getNoteColIdx() {
+  return (state.outputHeaders || []).findIndex(h => /备注|note|说明|remark/i.test(String(h || '')));
+}
+
+function visiblePreviewRowCount() {
+  return Math.min((state.outputRows || []).length, 8);
+}
+
+function setSelectedNoteRows(rows) {
+  const max = (state.outputRows || []).length;
+  state.selectedNoteRows = Array.from(new Set(rows.filter(i => i >= 0 && i < max))).sort((a, b) => a - b);
+}
+
+function toggleNoteRow(rowIdx, checked) {
+  const selected = new Set(state.selectedNoteRows || []);
+  if (checked) selected.add(rowIdx);
+  else selected.delete(rowIdx);
+  setSelectedNoteRows(Array.from(selected));
+  showExportStep();
+}
+
+function toggleVisibleNoteRows(checked) {
+  const selected = new Set(state.selectedNoteRows || []);
+  for (let i = 0; i < visiblePreviewRowCount(); i++) {
+    if (checked) selected.add(i);
+    else selected.delete(i);
+  }
+  setSelectedNoteRows(Array.from(selected));
+  showExportStep();
+}
+
+function selectVisibleNoteRows() {
+  const selected = new Set(state.selectedNoteRows || []);
+  for (let i = 0; i < visiblePreviewRowCount(); i++) selected.add(i);
+  setSelectedNoteRows(Array.from(selected));
+  showExportStep();
+}
+
+function selectAllNoteRows() {
+  setSelectedNoteRows((state.outputRows || []).map((_, i) => i));
+  showExportStep();
+}
+
+function clearNoteRowSelection() {
+  state.selectedNoteRows = [];
+  showExportStep();
+}
+
+function onNoteChange(inputEl, rowIdx) {
+  const noteIdx = getNoteColIdx();
+  if (noteIdx < 0 || !state.outputRows?.[rowIdx]) return;
+  state.outputRows[rowIdx][noteIdx] = inputEl.value;
+}
+
+function onNotePresetChange() {
+  const preset = document.getElementById('note-preset')?.value || '';
+  const custom = document.getElementById('note-custom-text');
+  if (custom) custom.classList.toggle('hidden', preset !== 'custom');
+}
+
+function getRemarkPresetValue(rowIdx, preset) {
+  const row = state.outputRows?.[rowIdx] || [];
+  if (preset === 'filename') {
+    const meta = state.outputRowMeta?.[rowIdx] || {};
+    return meta.fileName || state.sources.filter(s => s.selected).map(s => s.fileName).filter(Boolean).join('、');
+  }
+  if (preset === 'date') {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+  if (preset === 'shangshe') {
+    const shangSheIdx = (state.outputHeaders || []).indexOf('商社编号');
+    const shangSheId = shangSheIdx >= 0 ? String(row[shangSheIdx] || '').trim() : '';
+    const entry = shangSheId ? loadKB().shangSheMap[shangSheId] : null;
+    return entry?.shortName || entry?.fullName || '';
+  }
+  if (preset === 'custom') {
+    return document.getElementById('note-custom-text')?.value.trim() || '';
+  }
+  return '';
+}
+
+function applyBatchRemark() {
+  const noteIdx = getNoteColIdx();
+  if (noteIdx < 0) {
+    alert('当前模版没有备注列');
+    return;
+  }
+  const selected = state.selectedNoteRows || [];
+  if (!selected.length) {
+    alert('请先选择要添加备注的记录，或点击“全选全部记录”');
+    return;
+  }
+  const preset = document.getElementById('note-preset')?.value || 'filename';
+  const mode = document.getElementById('note-write-mode')?.value || 'replace';
+  if (preset === 'custom' && !document.getElementById('note-custom-text')?.value.trim()) {
+    alert('请输入自定义备注');
+    return;
+  }
+
+  selected.forEach(rowIdx => {
+    const row = state.outputRows[rowIdx];
+    if (!row) return;
+    const nextVal = getRemarkPresetValue(rowIdx, preset);
+    if (!nextVal) return;
+    if (mode === 'append' && row[noteIdx]) {
+      row[noteIdx] = `${row[noteIdx]} ${nextVal}`.trim();
+    } else {
+      row[noteIdx] = nextVal;
+    }
+  });
+
   showExportStep();
 }
 
@@ -2423,12 +2718,6 @@ async function exportYouyi(headers, rows, fileName) {
   XLSX.utils.book_append_sheet(wb, taskWs, '任务清单');
 
   await saveWorkbook(wb, fileName);
-
-  // Task 6: 导出后自动附加知识库备份
-  const shangSheCount = Object.keys(kb.shangSheMap).length;
-  if (shangSheCount > 0) {
-    exportKBToJSON();
-  }
 }
 
 // Generic: just headers + data
@@ -2461,7 +2750,7 @@ function resetAll() {
   Object.assign(state, {
     sources: [], previewSourceId: '', pendingFiles: 0, accumFileCount: 0,
     mappingState: null, targetTemplate: null, customFields: [],
-    outputRows: null, outputHeaders: null, templateFiles: {}, cleanCount: 0,
+    outputRows: null, outputHeaders: null, outputRowMeta: [], selectedNoteRows: [], templateFiles: {}, cleanCount: 0,
     unmatchedRows: [], shangSheCandidates: [],
   });
   ['accum-indicator','step-mapping','step-template','step-export'].forEach(id =>

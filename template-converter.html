@@ -281,6 +281,42 @@ const DEFAULT_CONFIG = {
   platforms: ['278.甲乙科技','283.丙丁工场','288.戊己客（灵活用工）6.2%','290.庚辛云','294.湖南清源','295.岳西众才','298.戊己客（企和推荐）7.1%','349.河南雅文','356.国联信宜','367.安徽优文莱（培训业务）','375.湖南合用工','376.戊己客（冠华系列）6.42%+50','378.安徽薪账通','379.咸宁合用工6.1%','397.戊己客平台（自营业务）7.5%','409.天津税地（身边云）5.6%','451.戊己客（7.9%）','453.戊己客（7.1%）','454.戊己客（8.1%）','455.戊己客（8.7%）','456.戊己客（9.6%）','461.戊己客（7.7%）','462.戊己客（7.5%）','468.潮涌（8.2%）','481.星薪平台（6.1%）','484.江西合用工（6.1%）','485.小规模纳税企业结算（6.67%）','486.河南茂丰源（5.4%）']
 };
 
+function getConfigLists(kb) {
+  const hasUploadedPlatforms = kb?.configData?.platforms && kb.configData.platforms.length > 0;
+  return {
+    platforms: hasUploadedPlatforms ? kb.configData.platforms : DEFAULT_CONFIG.platforms,
+    taxSources: hasUploadedPlatforms ? (kb.configData.taxSources || []) : DEFAULT_CONFIG.taxSources,
+    hasUploadedPlatforms
+  };
+}
+
+function uniqueTaxSources(taxSources) {
+  return Array.from(new Set([...(taxSources || []), ...DEFAULT_CONFIG.taxSources].filter(Boolean)));
+}
+
+function inferTaxSourceByPlatformName(platform) {
+  const name = String(platform || '');
+  if (!name) return '';
+  if (/天津|身边云|戊己客/.test(name)) return '0007.天津';
+  if (/河南|茂丰源|雅文/.test(name)) return '0003.河南';
+  if (/安徽|岳西|优文莱|薪账通/.test(name)) return '0004.安徽';
+  if (/信宜|国联/.test(name)) return '0005.信宜';
+  if (/湖北|咸宁/.test(name)) return '0006.湖北';
+  if (/海南/.test(name)) return '0002.海南';
+  if (/湖南|合用工|清源|甲乙/.test(name)) return '0001.湖南';
+  return '';
+}
+
+function taxSourceForPlatform(platform, kb) {
+  if (!platform) return '';
+  const { platforms, taxSources, hasUploadedPlatforms } = getConfigLists(kb || loadKB());
+  const platIdx = platforms.indexOf(platform);
+  if (hasUploadedPlatforms && platIdx >= 0 && taxSources[platIdx]) {
+    return taxSources[platIdx];
+  }
+  return inferTaxSourceByPlatformName(platform);
+}
+
 // 签约主体 → 平台映射
 function signEntityToPlatform(signEntity, platforms) {
   if (!signEntity) return '';
@@ -312,13 +348,6 @@ function signEntityToPlatform(signEntity, platforms) {
     if (match) return match;
   }
   return '';
-}
-
-// 签约主体 → 税源地映射
-function signEntityToTaxSource(signEntity) {
-  if (!signEntity) return '0001.湖南';
-  if (signEntity.includes('广州国联')) return '0005.信宜';
-  return '0001.湖南';
 }
 
 // 加载知识库
@@ -668,9 +697,9 @@ function lookupShangShe(shangSheId) {
   const entry = kb.shangSheMap[String(shangSheId).trim()];
   if (!entry) return null;
 
-  const platforms = kb.configData?.platforms || DEFAULT_CONFIG.platforms;
+  const { platforms } = getConfigLists(kb);
   const platform = signEntityToPlatform(entry.signEntity, platforms);
-  const taxSource = signEntityToTaxSource(entry.signEntity);
+  const taxSource = taxSourceForPlatform(platform, kb);
 
   // 从taskListData中查找匹配该商社编号的任务
   let matchedTasks = [];
@@ -1650,8 +1679,10 @@ function generateOutput() {
         out[platformIdx] = lookup.platform;
       }
       // 自动填充税源地
-      if (taxSourceIdx >= 0 && !out[taxSourceIdx] && lookup.taxSource) {
-        out[taxSourceIdx] = lookup.taxSource;
+      if (taxSourceIdx >= 0 && !out[taxSourceIdx]) {
+        const rowPlatform = platformIdx >= 0 ? out[platformIdx] : '';
+        const taxSource = taxSourceForPlatform(rowPlatform) || lookup.taxSource;
+        if (taxSource) out[taxSourceIdx] = taxSource;
       }
       // 自动填充任务清单和工种
       if (lookup.matchedTasks.length > 0) {
@@ -1780,6 +1811,19 @@ function cleanValue(val, type) {
   return s;
 }
 
+function escapeHTML(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizeSearchText(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
 // ==================== Export Step ====================
 function showExportStep() {
   const container = document.getElementById('export-content');
@@ -1797,15 +1841,28 @@ function showExportStep() {
   const isYouyi = state.targetTemplate === 'youyi';
   let allPlatforms = [];
   let allTaxSources = [];
+  let shangSheFullList = [];
+  let shangSheCandidates = [];
   if (isYouyi) {
     const kb = loadKB();
-    if (kb.configData && kb.configData.platforms && kb.configData.platforms.length > 0) {
-      allPlatforms = kb.configData.platforms;
-      allTaxSources = kb.configData.taxSources || [];
-    } else {
-      allPlatforms = DEFAULT_CONFIG.platforms;
-      allTaxSources = DEFAULT_CONFIG.taxSources;
-    }
+    const config = getConfigLists(kb);
+    allPlatforms = config.platforms;
+    allTaxSources = uniqueTaxSources(config.taxSources);
+    shangSheCandidates = (state.shangSheCandidates || []).filter(Boolean);
+    shangSheFullList = Object.entries(kb.shangSheMap || {}).map(([id, entry]) => {
+      const shortName = entry.shortName || '';
+      const fullName = entry.fullName || '';
+      const taxId = entry.taxId || '';
+      const label = `${id} - ${shortName || fullName}`;
+      return {
+        id,
+        label,
+        taxId,
+        fullName,
+        shortName,
+        searchText: normalizeSearchText([id, shortName, fullName, taxId, label].join(' '))
+      };
+    });
   }
 
   const pv = Math.min(rows.length, 8);
@@ -1822,7 +1879,7 @@ function showExportStep() {
         const currentVal = c || '';
         let optionsHTML = '<option value="">未选择</option>';
         for (const p of allPlatforms) {
-          optionsHTML += `<option value="${p}" ${p === currentVal ? 'selected' : ''}>${p}</option>`;
+          optionsHTML += `<option value="${escapeHTML(p)}" ${p === currentVal ? 'selected' : ''}>${escapeHTML(p)}</option>`;
         }
         cellContent = `<select onchange="onPlatformChange(this, ${ri})">${optionsHTML}</select>`;
       }
@@ -1833,9 +1890,18 @@ function showExportStep() {
         const matchedTasks = getTasksForShangShe(shangSheId);
         let optionsHTML = '<option value="">未选择</option>';
         for (const task of matchedTasks) {
-          optionsHTML += `<option value="${task.fullString}" ${task.fullString === currentVal ? 'selected' : ''}>${task.fullString}</option>`;
+          optionsHTML += `<option value="${escapeHTML(task.fullString)}" ${task.fullString === currentVal ? 'selected' : ''}>${escapeHTML(task.fullString)}</option>`;
         }
         cellContent = `<select onchange="onTaskChange(this, ${ri})">${optionsHTML}</select>`;
+      }
+      // 云杉模版：税源地列（column 7）显示下拉框，允许手动覆盖平台预匹配结果
+      else if (isYouyi && ci === 7) {
+        const currentVal = c || '';
+        let optionsHTML = '<option value="">未选择</option>';
+        for (const taxSource of allTaxSources) {
+          optionsHTML += `<option value="${escapeHTML(taxSource)}" ${taxSource === currentVal ? 'selected' : ''}>${escapeHTML(taxSource)}</option>`;
+        }
+        cellContent = `<select onchange="onTaxSourceChange(this, ${ri})">${optionsHTML}</select>`;
       }
       // 未匹配行的商社编号列添加"未匹配"标记
       else if (isUnmatched && ci === shangSheColIdx && c) {
@@ -1857,17 +1923,10 @@ function showExportStep() {
   // 云杉模版：手动匹配商社选择器（仅在有未匹配行时显示）- 可搜索下拉框
   let manualShangSheHTML = '';
   if (isYouyi && unmatchedSet.size > 0) {
-    const kb = loadKB();
     // Build candidates: if we have narrowed candidates from auto-matching, show those first
-    let candidateList = [];
-    if (state.shangSheCandidates && state.shangSheCandidates.length > 0) {
-      candidateList = state.shangSheCandidates;
-    }
+    const candidateList = shangSheCandidates;
     // Also prepare full list for search
-    const fullList = [];
-    for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-      fullList.push({ id, label: `${id} - ${entry.shortName || entry.fullName}`, taxId: entry.taxId || '', fullName: entry.fullName || '', shortName: entry.shortName || '' });
-    }
+    const fullList = shangSheFullList;
 
     const candidateHint = candidateList.length > 0
       ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">💡 已根据客户信息缩小范围，找到 ${candidateList.length} 个候选商社（也可搜索其他商社）</div>`
@@ -1928,10 +1987,10 @@ function showExportStep() {
   // 设置搜索下拉框所需的全局变量
   if (isYouyi) {
     // 设置商社列表数据
-    window._shangSheFullList = fullList;
-    window._shangSheCandidates = candidateList;
+    window._shangSheFullList = shangSheFullList;
+    window._shangSheCandidates = shangSheCandidates;
     // 设置平台列表数据
-    window._platformFullList = allPlatforms.map(p => ({ value: p, label: p }));
+    window._platformFullList = allPlatforms.map(p => ({ value: p, label: p, searchText: normalizeSearchText(p) }));
   }
 }
 
@@ -1981,24 +2040,15 @@ function onPlatformChange(selectEl, rowIdx) {
   const newVal = selectEl.value;
   state.outputRows[rowIdx][1] = newVal; // 更新平台列
 
-  // 根据新平台更新税源地（column 7）
-  const kb = loadKB();
-  let taxSources = [], platforms = [];
-  if (kb.configData && kb.configData.platforms && kb.configData.platforms.length > 0) {
-    taxSources = kb.configData.taxSources || [];
-    platforms = kb.configData.platforms;
-  } else {
-    taxSources = DEFAULT_CONFIG.taxSources;
-    platforms = DEFAULT_CONFIG.platforms;
+  const taxSource = taxSourceForPlatform(newVal);
+  if (taxSource) {
+    state.outputRows[rowIdx][7] = taxSource;
   }
+  showExportStep();
+}
 
-  if (newVal) {
-    // 在platforms数组中查找该平台的行索引，使用对应的taxSource
-    const platIdx = platforms.indexOf(newVal);
-    if (platIdx >= 0 && taxSources[platIdx]) {
-      state.outputRows[rowIdx][7] = taxSources[platIdx];
-    }
-  }
+function onTaxSourceChange(selectEl, rowIdx) {
+  state.outputRows[rowIdx][7] = selectEl.value;
 }
 
 // 任务切换处理
@@ -2024,22 +2074,7 @@ function applyPlatformToAll() {
     return;
   }
 
-  const kb = loadKB();
-  let taxSources = [], platforms = [];
-  if (kb.configData && kb.configData.platforms && kb.configData.platforms.length > 0) {
-    taxSources = kb.configData.taxSources || [];
-    platforms = kb.configData.platforms;
-  } else {
-    taxSources = DEFAULT_CONFIG.taxSources;
-    platforms = DEFAULT_CONFIG.platforms;
-  }
-
-  // 查找对应的税源地
-  let taxSource = '';
-  const platIdx = platforms.indexOf(platformVal);
-  if (platIdx >= 0 && taxSources[platIdx]) {
-    taxSource = taxSources[platIdx];
-  }
+  const taxSource = taxSourceForPlatform(platformVal);
 
   // 应用到所有行
   for (let i = 0; i < state.outputRows.length; i++) {
@@ -2090,8 +2125,10 @@ function applyManualShangShe() {
       out[platformIdx] = lookup.platform;
     }
     // 填充税源地
-    if (taxSourceIdx >= 0 && !out[taxSourceIdx] && lookup.taxSource) {
-      out[taxSourceIdx] = lookup.taxSource;
+    if (taxSourceIdx >= 0 && !out[taxSourceIdx]) {
+      const rowPlatform = platformIdx >= 0 ? out[platformIdx] : '';
+      const taxSource = taxSourceForPlatform(rowPlatform) || lookup.taxSource;
+      if (taxSource) out[taxSourceIdx] = taxSource;
     }
     // 填充任务清单和工种
     if (lookup.matchedTasks.length > 0) {
@@ -2124,20 +2161,25 @@ function filterShangSheList() {
   const dropdown = document.getElementById('shangshe-dropdown');
   if (!input || !dropdown) return;
 
-  const query = input.value.trim().toLowerCase();
-  // If candidates exist, search within candidates first; otherwise search full list
-  let list = (window._shangSheCandidates && window._shangSheCandidates.length > 0)
-    ? window._shangSheCandidates : window._shangSheFullList || [];
+  const query = normalizeSearchText(input.value);
+  // Always search the full knowledge base for comprehensive filtering
+  const fullList = window._shangSheFullList || [];
 
-  let filtered = list;
+  // Build candidate set for highlighting
+  const candidateIds = new Set();
+  if (window._shangSheCandidates && window._shangSheCandidates.length > 0) {
+    window._shangSheCandidates.forEach(c => candidateIds.add(c.id));
+  }
+
+  let filtered = fullList;
   if (query) {
-    filtered = list.filter(item =>
-      item.id.toLowerCase().includes(query) ||
-      (item.label && item.label.toLowerCase().includes(query)) ||
-      (item.taxId && item.taxId.toLowerCase().includes(query)) ||
-      (item.fullName && item.fullName.toLowerCase().includes(query)) ||
-      (item.shortName && item.shortName.toLowerCase().includes(query))
-    );
+    filtered = fullList.filter(item => (item.searchText || normalizeSearchText([
+      item.id,
+      item.label,
+      item.taxId,
+      item.fullName,
+      item.shortName
+    ].join(' '))).includes(query));
   }
 
   filtered = filtered.slice(0, 50);
@@ -2150,13 +2192,19 @@ function filterShangSheList() {
 
   dropdown.style.display = 'block';
   dropdown.innerHTML = filtered.map(item => {
-    const escapedLabel = (item.label || item.id).replace(/'/g, "\\'").replace(/"/g, '&quot;');
-    return `<div class="ss-dropdown-item" onclick="selectShangShe('${item.id}', '${escapedLabel}')">
-      <span class="ss-id">${item.id}</span>
-      <span class="ss-name">${item.shortName || item.label || ''}</span>
-      ${item.taxId ? `<span class="ss-taxid">税号: ${item.taxId}</span>` : ''}
+    const isCandidate = candidateIds.has(item.id);
+    const candStyle = isCandidate ? 'background:rgba(253,203,110,0.08);' : '';
+    const candBadge = isCandidate ? '<span style="color:var(--orange);font-size:10px;margin-left:4px;">候选</span>' : '';
+    return `<div class="ss-dropdown-item" data-ss-id="${escapeHTML(item.id)}" data-ss-label="${escapeHTML(item.label || item.id)}" onclick="selectShangSheFromItem(this)" style="${candStyle}">
+      <span class="ss-id">${escapeHTML(item.id)}${candBadge}</span>
+      <span class="ss-name">${escapeHTML(item.shortName || item.label || '')}</span>
+      ${item.taxId ? `<span class="ss-taxid">税号: ${escapeHTML(item.taxId)}</span>` : ''}
     </div>`;
   }).join('');
+}
+
+function selectShangSheFromItem(itemEl) {
+  selectShangShe(itemEl.dataset.ssId || '', itemEl.dataset.ssLabel || '');
 }
 
 function selectShangShe(id, label) {
@@ -2174,12 +2222,12 @@ function filterPlatformList() {
   const dropdown = document.getElementById('platform-dropdown');
   if (!input || !dropdown) return;
 
-  const query = input.value.trim().toLowerCase();
+  const query = normalizeSearchText(input.value);
   const list = window._platformFullList || [];
 
   let filtered = list;
   if (query) {
-    filtered = list.filter(item => item.label.toLowerCase().includes(query));
+    filtered = list.filter(item => (item.searchText || normalizeSearchText(item.label)).includes(query));
   }
 
   if (filtered.length === 0) {
@@ -2189,11 +2237,15 @@ function filterPlatformList() {
   }
 
   dropdown.style.display = 'block';
-  dropdown.innerHTML = filtered.map(item =>
-    `<div class="ss-dropdown-item" onclick="selectPlatform('${item.value.replace(/'/g, "\\'")}')">
-      <span class="ss-name">${item.label}</span>
-    </div>`
-  ).join('');
+  dropdown.innerHTML = filtered.map(item => {
+    return `<div class="ss-dropdown-item" data-platform-value="${escapeHTML(item.value)}" onclick="selectPlatformFromItem(this)">
+      <span class="ss-name">${escapeHTML(item.label)}</span>
+    </div>`;
+  }).join('');
+}
+
+function selectPlatformFromItem(itemEl) {
+  selectPlatform(itemEl.dataset.platformValue || '');
 }
 
 function showPlatformDropdown() {

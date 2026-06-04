@@ -285,6 +285,7 @@ const state = {
   mappingState: null,
   targetTemplate: null,
   selectedTemplates: [],
+  templateOutputs: {},
   customFields: [],
   outputRows: null,
   outputHeaders: null,
@@ -1757,6 +1758,50 @@ function confirmTemplate() {
   generateOutput();
 }
 
+function cloneTemplateOutputState() {
+  return {
+    outputHeaders: state.outputHeaders ? [...state.outputHeaders] : null,
+    outputRows: state.outputRows ? state.outputRows.map(r => [...r]) : null,
+    outputRowMeta: state.outputRowMeta ? state.outputRowMeta.map(m => ({ ...m })) : [],
+    cleanCount: state.cleanCount,
+    unmatchedRows: [...(state.unmatchedRows || [])],
+    shangSheCandidates: [...(state.shangSheCandidates || [])],
+    selectedNoteRows: [...(state.selectedNoteRows || [])],
+    previewRowLimit: state.previewRowLimit
+  };
+}
+
+function cacheCurrentTemplateOutput() {
+  if (!state.targetTemplate || !state.outputHeaders || !state.outputRows) return;
+  if (!state.templateOutputs) state.templateOutputs = {};
+  state.templateOutputs[state.targetTemplate] = cloneTemplateOutputState();
+}
+
+function restoreTemplateOutput(templateKey) {
+  const cached = state.templateOutputs?.[templateKey];
+  if (!cached) return false;
+  state.outputHeaders = cached.outputHeaders ? [...cached.outputHeaders] : null;
+  state.outputRows = cached.outputRows ? cached.outputRows.map(r => [...r]) : null;
+  state.outputRowMeta = cached.outputRowMeta ? cached.outputRowMeta.map(m => ({ ...m })) : [];
+  state.cleanCount = cached.cleanCount || 0;
+  state.unmatchedRows = [...(cached.unmatchedRows || [])];
+  state.shangSheCandidates = [...(cached.shangSheCandidates || [])];
+  state.selectedNoteRows = [...(cached.selectedNoteRows || [])];
+  state.previewRowLimit = cached.previewRowLimit || DEFAULT_PREVIEW_ROW_LIMIT;
+  return true;
+}
+
+function switchPreviewTemplate(templateKey) {
+  if (!templateKey || templateKey === state.targetTemplate) return;
+  cacheCurrentTemplateOutput();
+  state.targetTemplate = templateKey;
+  if (restoreTemplateOutput(templateKey)) {
+    showExportStep();
+  } else {
+    generateOutput();
+  }
+}
+
 // ==================== Generate Output ====================
 function generateOutput() {
   const { sourcesData } = state.mappingState;
@@ -2011,6 +2056,7 @@ function generateOutput() {
   state.unmatchedRows = unmatchedRows;
   state.selectedNoteRows = [];
   state.previewRowLimit = DEFAULT_PREVIEW_ROW_LIMIT;
+  cacheCurrentTemplateOutput();
   showExportStep();
 }
 
@@ -2121,6 +2167,7 @@ function showExportStep() {
 
   const headers = state.outputHeaders;
   const rows = state.outputRows;
+  cacheCurrentTemplateOutput();
   const tplName = state.targetTemplate === 'custom' ? '自定义' : TEMPLATES[state.targetTemplate].name;
   const unmatchedSet = new Set(state.unmatchedRows || []);
   const noteColIdx = headers.findIndex(h => /备注|note|说明|remark/i.test(String(h || '')));
@@ -2312,13 +2359,20 @@ function showExportStep() {
   }
 
   const selectedExportTemplates = getSelectedTemplates().filter(k => k !== 'custom');
+  const previewSwitchHTML = selectedExportTemplates.length > 1
+    ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+        <span style="font-size:13px;font-weight:600;color:var(--text2);">切换预览:</span>
+        ${selectedExportTemplates.map(k => `<button class="btn ${k === state.targetTemplate ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="switchPreviewTemplate('${k}')">${TEMPLATES[k].icon} ${TEMPLATES[k].name}</button>`).join('')}
+      </div>`
+    : '';
   const multiExportHTML = selectedExportTemplates.length > 1
-    ? `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="exportSelectedExcel()">📦 批量导出所选模版 Excel（${selectedExportTemplates.length} 个）</button>`
+    ? `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="exportSelectedExcel()">📦 打包导出 ZIP（${selectedExportTemplates.length} 个 Excel）</button>`
     : '';
 
   container.innerHTML = `
     <div class="status-msg success">✅ 转换完成 — ${tplName}（${rows.length} 行）</div>
     ${selectedExportTemplates.length > 1 ? `<div class="status-msg info">本次已选择：${selectedExportTemplates.map(k => TEMPLATES[k].name).join('、')}。当前表格预览为 ${tplName}。</div>` : ''}
+    ${previewSwitchHTML}
     ${kbMatchHTML}
     ${manualShangSheHTML}
     ${state.cleanCount > 0 ? `<div class="status-msg info">🧹 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
@@ -2789,7 +2843,11 @@ function getTodayStr() {
 }
 
 function getExportFileName(ext) {
-  const tplName = state.targetTemplate === 'custom' ? '自定义' : TEMPLATES[state.targetTemplate].name;
+  return getExportFileNameForTemplate(state.targetTemplate, ext);
+}
+
+function getExportFileNameForTemplate(templateKey, ext) {
+  const tplName = templateKey === 'custom' ? '自定义' : TEMPLATES[templateKey].name;
   return `${tplName}_转换结果_${getTodayStr()}.${ext}`;
 }
 
@@ -2847,21 +2905,132 @@ async function saveCSV(csvContent, defaultName) {
   return true;
 }
 
+async function saveBlobAsFile(blob, defaultName, description, accept) {
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: defaultName,
+        types: [{ description, accept }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return true;
+    } catch (e) {
+      if (e.name === 'AbortError') return false;
+      console.warn('showSaveFilePicker failed, falling back:', e);
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = defaultName;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  return true;
+}
+
+function workbookToArray(wb) {
+  return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+}
+
+function crc32(bytes) {
+  if (!crc32.table) {
+    crc32.table = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      crc32.table[i] = c >>> 0;
+    }
+  }
+  let crc = 0 ^ -1;
+  for (let i = 0; i < bytes.length; i++) {
+    crc = (crc >>> 8) ^ crc32.table[(crc ^ bytes[i]) & 0xff];
+  }
+  return (crc ^ -1) >>> 0;
+}
+
+function dosDateTime(date = new Date()) {
+  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
+  const dosDate = ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
+  return { time, date: dosDate };
+}
+
+function u16(value) {
+  const b = new Uint8Array(2);
+  b[0] = value & 0xff;
+  b[1] = (value >>> 8) & 0xff;
+  return b;
+}
+
+function u32(value) {
+  const b = new Uint8Array(4);
+  b[0] = value & 0xff;
+  b[1] = (value >>> 8) & 0xff;
+  b[2] = (value >>> 16) & 0xff;
+  b[3] = (value >>> 24) & 0xff;
+  return b;
+}
+
+function concatBytes(parts) {
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  parts.forEach(part => {
+    out.set(part, offset);
+    offset += part.length;
+  });
+  return out;
+}
+
+function createZipBlob(files) {
+  const encoder = new TextEncoder();
+  const localParts = [];
+  const centralParts = [];
+  const { time, date } = dosDateTime();
+  let offset = 0;
+
+  files.forEach(file => {
+    const nameBytes = encoder.encode(file.name);
+    const dataBytes = file.data instanceof Uint8Array ? file.data : new Uint8Array(file.data);
+    const crc = crc32(dataBytes);
+    const localHeader = concatBytes([
+      u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
+      u32(crc), u32(dataBytes.length), u32(dataBytes.length), u16(nameBytes.length), u16(0), nameBytes
+    ]);
+    localParts.push(localHeader, dataBytes);
+
+    const centralHeader = concatBytes([
+      u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
+      u32(crc), u32(dataBytes.length), u32(dataBytes.length), u16(nameBytes.length),
+      u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), nameBytes
+    ]);
+    centralParts.push(centralHeader);
+    offset += localHeader.length + dataBytes.length;
+  });
+
+  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+  const endRecord = concatBytes([
+    u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length),
+    u32(centralSize), u32(offset), u16(0)
+  ]);
+
+  return new Blob([...localParts, ...centralParts, endRecord], { type: 'application/zip' });
+}
+
 // ==================== Excel Export (Template-Preserving) ====================
 async function exportExcel() {
   const headers = state.outputHeaders;
   const rows = state.outputRows;
   const fileName = getExportFileName('xlsx');
+  const wb = buildWorkbookForTemplate(state.targetTemplate, headers, rows);
+  return await saveWorkbook(wb, fileName);
+}
 
-  if (state.targetTemplate === 'yidao') {
-    return await exportYidao(headers, rows, fileName);
-  } else if (state.targetTemplate === 'shenbianyun') {
-    return await exportShenbianyun(headers, rows, fileName);
-  } else if (state.targetTemplate === 'youyi') {
-    return await exportYouyi(headers, rows, fileName);
-  } else {
-    return await exportGeneric(headers, rows, fileName);
-  }
+function buildWorkbookForTemplate(templateKey, headers, rows) {
+  if (templateKey === 'yidao') return buildYidaoWorkbook(headers, rows);
+  if (templateKey === 'shenbianyun') return buildShenbianyunWorkbook(headers, rows);
+  if (templateKey === 'youyi') return buildYouyiWorkbook(headers, rows);
+  return buildGenericWorkbook(headers, rows);
 }
 
 async function exportSelectedExcel() {
@@ -2871,54 +3040,43 @@ async function exportSelectedExcel() {
     return;
   }
 
-  const snapshot = {
-    targetTemplate: state.targetTemplate,
-    outputHeaders: state.outputHeaders ? [...state.outputHeaders] : null,
-    outputRows: state.outputRows ? state.outputRows.map(r => [...r]) : null,
-    outputRowMeta: state.outputRowMeta ? state.outputRowMeta.map(m => ({ ...m })) : [],
-    cleanCount: state.cleanCount,
-    unmatchedRows: [...(state.unmatchedRows || [])],
-    shangSheCandidates: [...(state.shangSheCandidates || [])],
-    selectedNoteRows: [...(state.selectedNoteRows || [])],
-    previewRowLimit: state.previewRowLimit
-  };
-
-  let exportedCount = 0;
+  cacheCurrentTemplateOutput();
+  const currentTemplate = state.targetTemplate;
+  const files = [];
   for (const templateKey of selectedTemplates) {
-    state.targetTemplate = templateKey;
-    if (templateKey === snapshot.targetTemplate && snapshot.outputRows) {
-      state.outputHeaders = snapshot.outputHeaders.map(h => h);
-      state.outputRows = snapshot.outputRows.map(r => [...r]);
-      state.outputRowMeta = snapshot.outputRowMeta.map(m => ({ ...m }));
-      state.cleanCount = snapshot.cleanCount;
-      state.unmatchedRows = [...snapshot.unmatchedRows];
-      state.shangSheCandidates = [...snapshot.shangSheCandidates];
-      state.selectedNoteRows = [...snapshot.selectedNoteRows];
-      state.previewRowLimit = snapshot.previewRowLimit;
-    } else {
+    if (!state.templateOutputs?.[templateKey]) {
+      state.targetTemplate = templateKey;
       generateOutput();
     }
-    const saved = await exportExcel();
-    if (saved) exportedCount++;
+    const cached = state.templateOutputs?.[templateKey];
+    if (!cached?.outputHeaders || !cached?.outputRows) continue;
+    const wb = buildWorkbookForTemplate(templateKey, cached.outputHeaders, cached.outputRows);
+    files.push({
+      name: getExportFileNameForTemplate(templateKey, 'xlsx'),
+      data: workbookToArray(wb)
+    });
   }
 
-  Object.assign(state, {
-    targetTemplate: snapshot.targetTemplate,
-    outputHeaders: snapshot.outputHeaders,
-    outputRows: snapshot.outputRows,
-    outputRowMeta: snapshot.outputRowMeta,
-    cleanCount: snapshot.cleanCount,
-    unmatchedRows: snapshot.unmatchedRows,
-    shangSheCandidates: snapshot.shangSheCandidates,
-    selectedNoteRows: snapshot.selectedNoteRows,
-    previewRowLimit: snapshot.previewRowLimit
-  });
+  state.targetTemplate = currentTemplate;
+  restoreTemplateOutput(currentTemplate);
   showExportStep();
-  if (exportedCount > 0) alert(`已导出 ${exportedCount} 个模版文件`);
+  if (!files.length) {
+    alert('没有可导出的模版数据');
+    return;
+  }
+
+  const zipBlob = createZipBlob(files);
+  const saved = await saveBlobAsFile(
+    zipBlob,
+    `批量模版转换结果_${getTodayStr()}.zip`,
+    'ZIP 压缩包',
+    { 'application/zip': ['.zip'] }
+  );
+  if (saved) alert(`已打包导出 ${files.length} 个 Excel 文件`);
 }
 
 // 移步到岗: 1 header row + data rows
-async function exportYidao(headers, rows, fileName) {
+function buildYidaoWorkbook(headers, rows) {
   const wsData = [headers, ...rows];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
   ws['!cols'] = headers.map((h, i) => {
@@ -2928,11 +3086,11 @@ async function exportYidao(headers, rows, fileName) {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '智能模板');
-  return await saveWorkbook(wb, fileName);
+  return wb;
 }
 
 // 身边云: Row1=instructions(merged), Row2=batch info, Row3=empty, Row4=header, Row5+=data
-async function exportShenbianyun(headers, rows, fileName) {
+function buildShenbianyunWorkbook(headers, rows) {
   const wsData = [
     ['单批次最大支持1000条订单。\n商户订单号纯数字并且唯一，禁止重复。\n付款金额保留两位小数，四舍五入。\n备注字段最大限制20字，银行备注展示限制具体以银行为准。\n付款文件名称或备注存在以下字段会导致文件上传失败：工资、薪酬、提现、薪、补贴、分红、奖金、返现、劳务费、分润、备用金、¥、$\n银行卡号建议使用一类户，如使用二类户日限额导致交易退汇，需T+8个工作日退回','','','','','',''],
     ['商户批次号（非必填）','总笔数（非必填）','总金额（元，非必填）','','','',''],
@@ -2950,11 +3108,11 @@ async function exportShenbianyun(headers, rows, fileName) {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '个人银行账户批量付款模板');
-  return await saveWorkbook(wb, fileName);
+  return wb;
 }
 
 // 云杉公司: 从头生成费用明细 + 动态生成配置表和任务清单
-async function exportYouyi(headers, rows, fileName) {
+function buildYouyiWorkbook(headers, rows) {
   const kb = loadKB();
   const wb = XLSX.utils.book_new();
 
@@ -2980,11 +3138,11 @@ async function exportYouyi(headers, rows, fileName) {
   taskWs['!cols'] = [{ wch: 40 }];
   XLSX.utils.book_append_sheet(wb, taskWs, '任务清单');
 
-  return await saveWorkbook(wb, fileName);
+  return wb;
 }
 
 // Generic: just headers + data
-async function exportGeneric(headers, rows, fileName) {
+function buildGenericWorkbook(headers, rows) {
   const wsData = [headers, ...rows];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
   ws['!cols'] = headers.map((h, i) => {
@@ -2994,7 +3152,7 @@ async function exportGeneric(headers, rows, fileName) {
   });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '数据');
-  return await saveWorkbook(wb, fileName);
+  return wb;
 }
 
 async function exportCSV() {
@@ -3012,7 +3170,7 @@ async function exportCSV() {
 function resetAll() {
   Object.assign(state, {
     sources: [], previewSourceId: '', pendingFiles: 0, accumFileCount: 0,
-    mappingState: null, targetTemplate: null, selectedTemplates: [], customFields: [],
+    mappingState: null, targetTemplate: null, selectedTemplates: [], templateOutputs: {}, customFields: [],
     outputRows: null, outputHeaders: null, outputRowMeta: [], selectedNoteRows: [], previewRowLimit: DEFAULT_PREVIEW_ROW_LIMIT, templateFiles: {}, cleanCount: 0,
     unmatchedRows: [], shangSheCandidates: [],
   });

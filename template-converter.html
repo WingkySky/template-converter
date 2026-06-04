@@ -133,6 +133,38 @@
     font-size: 13px; outline: none; width: 200px;
   }
   .custom-field-input:focus { border-color: var(--accent); }
+  /* 知识库卡片样式 */
+  .kb-status-grid {
+    display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px;
+  }
+  .kb-stat {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 16px; font-size: 13px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .kb-stat .num { font-size: 20px; font-weight: 700; color: var(--accent2); }
+  .kb-stat .label { color: var(--text2); font-size: 12px; }
+  .kb-btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .btn-orange { background: var(--orange); color: #1a1d27; }
+  .btn-orange:hover { opacity: 0.9; }
+  .btn-red { background: var(--red); color: #fff; }
+  .btn-red:hover { opacity: 0.9; }
+  .unmatched-row td { background: rgba(253,203,110,0.1) !important; }
+  .unmatched-badge {
+    display: inline-block; font-size: 10px; padding: 1px 6px;
+    border-radius: 10px; background: rgba(253,203,110,0.25);
+    color: var(--orange); font-weight: 600; margin-left: 4px; vertical-align: middle;
+  }
+  .result-table select {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 4px; padding: 4px 6px; color: var(--text);
+    font-size: 12px; max-width: 160px;
+  }
+  .ss-dropdown-item { padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border); }
+  .ss-dropdown-item:hover { background:rgba(108,92,231,0.1); }
+  .ss-dropdown-item .ss-id { color:var(--accent2);font-weight:600; }
+  .ss-dropdown-item .ss-name { color:var(--text);margin-left:8px; }
+  .ss-dropdown-item .ss-taxid { color:var(--text2);font-size:11px;margin-left:8px; }
   @media (max-width: 640px) {
     body { padding: 12px; }
     h1 { font-size: 22px; }
@@ -146,6 +178,36 @@
 <div class="container">
   <h1>🔄 灵工发放模版转换工具</h1>
   <p class="subtitle">上传样例文件，智能识别数据列，一键转换为不同平台的导入模版</p>
+
+  <!-- 知识库管理卡片 -->
+  <div class="card" id="step-kb">
+    <div class="card-title">
+      <span class="icon" style="background:rgba(253,203,110,0.15);">📚</span>
+      知识库管理
+    </div>
+    <div id="kb-status-area" class="kb-status-grid">
+      <div class="kb-stat"><div><div class="num">0</div><div class="label">商社数量</div></div></div>
+      <div class="kb-stat"><div><div class="num">0</div><div class="label">任务数量</div></div></div>
+      <div class="kb-stat"><div><div class="num" style="font-size:13px;">未加载</div><div class="label">最后更新</div></div></div>
+    </div>
+    <div style="margin-bottom:14px;padding:12px 16px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);font-size:13px;color:var(--text2);line-height:1.8;">
+      <div style="font-weight:600;color:var(--text);margin-bottom:4px;">📋 知识库文件格式要求</div>
+      上传 Excel 文件（.xlsx/.xls），第一行为表头，需包含以下10列：<br>
+      <span style="color:var(--accent2);">商社编号 | 商社简称 | 商社全称 | 一级业务类型 | 二级业务类型 | 纳税人识别号 | 签约费率 | 签约主体 | 任务名称 | 服务内容</span><br>
+      其中<span style="color:var(--orange);">商社编号、签约主体、任务名称</span>为自动填充关键字段。<span style="color:var(--text2);">签约费率仅用于未来收款计算，当前不参与模板填充。</span>同一商社可有多行（不同任务），系统会按商社编号自动合并。
+    </div>
+    <div class="kb-btn-row">
+      <button class="btn btn-primary" onclick="document.getElementById('kb-upload-input').click()">📤 上传知识库</button>
+      <input type="file" id="kb-upload-input" accept=".xlsx,.xls" style="display:none;" onchange="handleKBUpload(event)">
+      <button class="btn btn-orange btn-sm" onclick="downloadKBSample()">📄 下载样例文件</button>
+      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('kb-config-upload-input').click()">🔄 更新配置数据</button>
+      <input type="file" id="kb-config-upload-input" accept=".xlsx,.xls" style="display:none;" onchange="handleKBConfigUpload(event)">
+      <button class="btn btn-secondary" onclick="exportKBToJSON()">💾 导出备份</button>
+      <button class="btn btn-secondary" onclick="document.getElementById('kb-import-input').click()">📥 导入备份</button>
+      <input type="file" id="kb-import-input" accept=".json" style="display:none;" onchange="handleKBImport(event)">
+      <button class="btn btn-red btn-sm" onclick="clearKB()">🗑️ 清空知识库</button>
+    </div>
+  </div>
 
   <div class="card" id="step-upload">
     <div class="card-title">
@@ -204,19 +266,609 @@ const state = {
   cleanCount: 0,
   // Template file data (ArrayBuffer) for preservation-based export
   templateFiles: {},
+  // 知识库匹配状态：记录哪些输出行未匹配到知识库
+  unmatchedRows: [],
+  // 缩小范围的候选商社（供手动选择器使用）
+  shangSheCandidates: [],
 };
+
+// ==================== 知识库 (Knowledge Base) ====================
+const KB_STORAGE_KEY = 'lg_knowledge_base';
+
+// 默认配置数据（硬编码兜底）
+const DEFAULT_CONFIG = {
+  taxSources: ['0001.湖南','0002.海南','0003.河南','0004.安徽','0005.信宜','0006.湖北','0007.天津'],
+  platforms: ['278.甲乙科技','283.丙丁工场','288.戊己客（灵活用工）6.2%','290.庚辛云','294.湖南清源','295.岳西众才','298.戊己客（企和推荐）7.1%','349.河南雅文','356.国联信宜','367.安徽优文莱（培训业务）','375.湖南合用工','376.戊己客（冠华系列）6.42%+50','378.安徽薪账通','379.咸宁合用工6.1%','397.戊己客平台（自营业务）7.5%','409.天津税地（身边云）5.6%','451.戊己客（7.9%）','453.戊己客（7.1%）','454.戊己客（8.1%）','455.戊己客（8.7%）','456.戊己客（9.6%）','461.戊己客（7.7%）','462.戊己客（7.5%）','468.潮涌（8.2%）','481.星薪平台（6.1%）','484.江西合用工（6.1%）','485.小规模纳税企业结算（6.67%）','486.河南茂丰源（5.4%）']
+};
+
+// 签约主体 → 平台映射
+function signEntityToPlatform(signEntity, platforms) {
+  if (!signEntity) return '';
+  const allPlatforms = platforms || DEFAULT_CONFIG.platforms;
+  if (signEntity.includes('佛山云杉')) {
+    // 匹配包含"佛山"或"甲乙"的平台
+    const match = allPlatforms.find(p => p.includes('佛山') || p.includes('甲乙'));
+    return match || '';
+  }
+  if (signEntity.includes('广州南沙云杉')) {
+    // 匹配包含"南沙"的平台
+    const match = allPlatforms.find(p => p.includes('南沙'));
+    return match || '';
+  }
+  if (signEntity.includes('广州国联')) {
+    // 匹配包含"国联"的平台
+    const match = allPlatforms.find(p => p.includes('国联'));
+    return match || '';
+  }
+  if (signEntity.includes('广州云杉')) {
+    // 匹配包含"广州"或"云杉"的平台（排除南沙/国联）
+    const match = allPlatforms.find(p => (p.includes('广州') || p.includes('云杉')) && !p.includes('南沙') && !p.includes('国联'));
+    return match || '';
+  }
+  // 模糊匹配：尝试从签约主体名称中提取关键词匹配
+  const keywords = signEntity.replace(/有限公司|人力资源|服务|广州|佛山/g, '').slice(0, 4);
+  if (keywords) {
+    const match = allPlatforms.find(p => p.includes(keywords));
+    if (match) return match;
+  }
+  return '';
+}
+
+// 签约主体 → 税源地映射
+function signEntityToTaxSource(signEntity) {
+  if (!signEntity) return '0001.湖南';
+  if (signEntity.includes('广州国联')) return '0005.信宜';
+  return '0001.湖南';
+}
+
+// 加载知识库
+function loadKB() {
+  try {
+    const raw = localStorage.getItem(KB_STORAGE_KEY);
+    if (raw) {
+      const kb = JSON.parse(raw);
+      if (kb && kb.shangSheMap) {
+        // 确保新字段有默认值（兼容旧数据）
+        if (!kb.configData) kb.configData = { taxSources: [], platforms: [] };
+        if (!kb.taskListData) kb.taskListData = [];
+        return kb;
+      }
+    }
+  } catch (e) {
+    console.warn('加载知识库失败:', e);
+  }
+  return { shangSheMap: {}, configData: { taxSources: [], platforms: [] }, taskListData: [], lastUpdated: null };
+}
+
+// 保存知识库
+function saveKB(kb) {
+  kb.lastUpdated = new Date().toISOString();
+  try {
+    localStorage.setItem(KB_STORAGE_KEY, JSON.stringify(kb));
+  } catch (e) {
+    console.error('保存知识库失败:', e);
+    alert('保存知识库失败，可能是存储空间不足');
+  }
+  updateKBStatus();
+}
+
+// 清空知识库
+function clearKB() {
+  if (!confirm('确定要清空知识库吗？此操作不可恢复。')) return;
+  localStorage.removeItem(KB_STORAGE_KEY);
+  updateKBStatus();
+}
+
+// 导出知识库为JSON文件
+function exportKBToJSON() {
+  const kb = loadKB();
+  const count = Object.keys(kb.shangSheMap).length;
+  if (count === 0) {
+    alert('知识库为空，无法导出');
+    return;
+  }
+  const jsonStr = JSON.stringify(kb, null, 2);
+  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const d = new Date();
+  a.download = `知识库备份_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+// 从JSON字符串导入知识库（合并逻辑：新数据覆盖旧数据）
+function importKBFromJSON(jsonStr) {
+  let newKB;
+  try {
+    newKB = JSON.parse(jsonStr);
+  } catch (e) {
+    alert('JSON格式错误，无法解析');
+    return false;
+  }
+  if (!newKB || !newKB.shangSheMap || typeof newKB.shangSheMap !== 'object') {
+    alert('JSON格式不正确，缺少shangSheMap字段');
+    return false;
+  }
+  const currentKB = loadKB();
+  // 合并：新数据覆盖旧数据
+  for (const [id, entry] of Object.entries(newKB.shangSheMap)) {
+    currentKB.shangSheMap[id] = entry;
+  }
+  // 合并配置数据（新数据覆盖旧数据）
+  if (newKB.configData) {
+    currentKB.configData = newKB.configData;
+  }
+  // 合并任务清单数据（新数据覆盖旧数据）
+  if (newKB.taskListData) {
+    currentKB.taskListData = newKB.taskListData;
+  }
+  saveKB(currentKB);
+  return true;
+}
+
+// 下载知识库样例文件
+function downloadKBSample() {
+  const headers = ['商社编号','商社简称','商社全称','一级业务类型','二级业务类型','纳税人识别号','签约费率','签约主体','任务名称','服务内容'];
+  const sampleRow1 = ['0000913','甲乙商贸（灵活用工）','甲乙商贸（广州）有限公司','新业态服务','平台用工','91440101F0E3LB8770','6','佛山云杉人力资源服务有限公司','保洁服务','我司需要一批自由职业者提供保洁服务，包含但不限于办公场所的清洁打扫工作等'];
+  const sampleRow2 = ['0000913','甲乙商贸（灵活用工）','甲乙商贸（广州）有限公司','新业态服务','平台用工','91440101F0E3LB8770','6','佛山云杉人力资源服务有限公司','搬运服务','我司需要一批自由职业者提供搬运服务'];
+  const sampleRow3 = ['0349912','测试（信息中心）','测试（信息中心）','新业态服务','平台用工','','8.5','广州市云杉对外服务有限公司','司机','开车'];
+  const wsData = [headers, sampleRow1, sampleRow2, sampleRow3];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = [
+    {wch:12},{wch:22},{wch:30},{wch:12},{wch:18},{wch:22},{wch:10},{wch:28},{wch:16},{wch:50}
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sheet1');
+  XLSX.writeFile(wb, '知识库样例文件.xlsx');
+}
+
+// 处理知识库Excel上传
+function handleKBUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = e.target.result;
+      const wb = XLSX.read(data, { type: 'array' });
+      // 读取第一个sheet
+      const sheetName = wb.SheetNames[0];
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+
+      if (rows.length < 2) {
+        alert('知识库文件数据不足（至少需要表头+1行数据）');
+        return;
+      }
+
+      // 跳过表头行(row 0)，解析数据行
+      // 列: 0-商社编号, 1-商社简称, 2-商社全称, 3-一级业务类型, 4-二级业务类型,
+      //     5-纳税人识别号, 6-签约费率, 7-签约主体, 8-任务名称, 9-服务内容
+      const kb = loadKB();
+      let newCount = 0, updateCount = 0;
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i] || [];
+        const shangSheId = String(row[0] || '').trim();
+        if (!shangSheId) continue; // 跳过无商社编号的行
+
+        const shortName = String(row[1] || '').trim();
+        const fullName = String(row[2] || '').trim();
+        const taxId = String(row[5] || '').trim();
+        const feeRate = parseFloat(row[6]) || 0;
+        const signEntity = String(row[7] || '').trim();
+        const taskName = String(row[8] || '').trim();
+        const taskContent = String(row[9] || '').trim();
+
+        // 如果该商社已存在，更新基本信息并追加任务
+        if (kb.shangSheMap[shangSheId]) {
+          const entry = kb.shangSheMap[shangSheId];
+          // 更新基本信息（新数据覆盖旧数据）
+          if (shortName) entry.shortName = shortName;
+          if (fullName) entry.fullName = fullName;
+          if (taxId) entry.taxId = taxId;
+          if (feeRate) entry.feeRate = feeRate;
+          if (signEntity) entry.signEntity = signEntity;
+          // 追加任务（如果任务名不为空且不重复）
+          if (taskName) {
+            const exists = entry.tasks.some(t => t.name === taskName);
+            if (!exists) {
+              entry.tasks.push({ name: taskName, content: taskContent });
+            }
+          }
+          updateCount++;
+        } else {
+          // 新建商社条目
+          const entry = {
+            id: shangSheId,
+            shortName: shortName,
+            fullName: fullName,
+            taxId: taxId,
+            feeRate: feeRate,
+            signEntity: signEntity,
+            tasks: []
+          };
+          if (taskName) {
+            entry.tasks.push({ name: taskName, content: taskContent });
+          }
+          kb.shangSheMap[shangSheId] = entry;
+          newCount++;
+        }
+      }
+
+      saveKB(kb);
+      const total = Object.keys(kb.shangSheMap).length;
+      alert(`知识库上传成功！\n新增 ${newCount} 个商社，更新 ${updateCount} 条记录\n当前共 ${total} 个商社`);
+    } catch (err) {
+      console.error('解析知识库文件失败:', err);
+      alert('解析知识库文件失败：' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  // 重置input以便再次选择同一文件
+  event.target.value = '';
+}
+
+// 处理JSON备份导入
+function handleKBImport(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const jsonStr = e.target.result;
+    if (importKBFromJSON(jsonStr)) {
+      const kb = loadKB();
+      const count = Object.keys(kb.shangSheMap).length;
+      alert(`知识库导入成功！当前共 ${count} 个商社`);
+    }
+  };
+  reader.readAsText(file, 'utf-8');
+  event.target.value = '';
+}
+
+// 处理配置数据上传（从模板文件更新配置表和任务清单）
+function handleKBConfigUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    try {
+      const data = e.target.result;
+      const wb = XLSX.read(data, { type: 'array' });
+      const kb = loadKB();
+      let taxSourceCount = 0, platformCount = 0, taskCount = 0, shangSheCrossRef = 0;
+
+      // 1. 解析"配置表"sheet
+      const configSheetName = wb.SheetNames.find(n => n.includes('配置表'));
+      if (configSheetName) {
+        const ws = wb.Sheets[configSheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+        if (rows.length >= 2) {
+          const taxSources = [];
+          const platforms = [];
+          // Row 0 is header ("税源地", "平台")
+          for (let i = 1; i < rows.length; i++) {
+            const row = rows[i] || [];
+            const taxVal = String(row[0] || '').trim();
+            const platVal = String(row[1] || '').trim();
+            taxSources.push(taxVal);
+            platforms.push(platVal);
+          }
+          // Filter out completely empty values
+          kb.configData = {
+            taxSources: taxSources.filter(v => v !== ''),
+            platforms: platforms.filter(v => v !== '')
+          };
+          taxSourceCount = kb.configData.taxSources.length;
+          platformCount = kb.configData.platforms.length;
+        }
+      }
+
+      // 2. 解析"任务清单"sheet
+      const taskSheetName = wb.SheetNames.find(n => n.includes('任务清单'));
+      if (taskSheetName) {
+        const ws = wb.Sheets[taskSheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+        if (rows.length >= 2) {
+          const taskEntries = [];
+          // Row 0 is header ("任务清单")
+          for (let i = 1; i < rows.length; i++) {
+            const row = rows[i] || [];
+            const entry = String(row[0] || '').trim();
+            if (entry) taskEntries.push(entry);
+          }
+          kb.taskListData = taskEntries;
+          taskCount = taskEntries.length;
+        }
+      }
+
+      // 3. 解析"费用明细"sheet - 提取商社编号并交叉引用
+      const detailSheetName = wb.SheetNames.find(n => n.includes('费用明细'));
+      if (detailSheetName) {
+        const ws = wb.Sheets[detailSheetName];
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+        if (rows.length >= 2) {
+          // 查找商社编号列
+          const headerRow = rows[0] || [];
+          let shangSheColIdx = -1;
+          for (let c = 0; c < headerRow.length; c++) {
+            if (/商社编号/.test(String(headerRow[c] || ''))) {
+              shangSheColIdx = c;
+              break;
+            }
+          }
+          if (shangSheColIdx >= 0) {
+            const shangSheIds = new Set();
+            for (let i = 1; i < rows.length; i++) {
+              const val = String((rows[i] || [])[shangSheColIdx] || '').trim();
+              if (val) shangSheIds.add(val);
+            }
+            // 交叉引用：如果KB中有该商社编号则计数
+            for (const id of shangSheIds) {
+              if (kb.shangSheMap[id]) shangSheCrossRef++;
+            }
+          }
+        }
+      }
+
+      saveKB(kb);
+
+      let msg = '配置数据更新成功！\n';
+      if (taxSourceCount > 0 || platformCount > 0) {
+        msg += `配置表：${taxSourceCount} 个税源地，${platformCount} 个平台\n`;
+      }
+      if (taskCount > 0) {
+        msg += `任务清单：${taskCount} 条任务\n`;
+      }
+      if (shangSheCrossRef > 0) {
+        msg += `费用明细交叉引用：${shangSheCrossRef} 个商社编号已在知识库中`;
+      }
+      if (taxSourceCount === 0 && platformCount === 0 && taskCount === 0) {
+        msg += '未找到"配置表"或"任务清单"工作表';
+      }
+      alert(msg);
+    } catch (err) {
+      console.error('解析配置数据文件失败:', err);
+      alert('解析配置数据文件失败：' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+  event.target.value = '';
+}
+
+// 更新知识库状态显示
+function updateKBStatus() {
+  const kb = loadKB();
+  const shangSheCount = Object.keys(kb.shangSheMap).length;
+  let taskCount = 0;
+  for (const entry of Object.values(kb.shangSheMap)) {
+    taskCount += (entry.tasks || []).length;
+  }
+  let lastUpdated = '未加载';
+  if (kb.lastUpdated) {
+    const d = new Date(kb.lastUpdated);
+    lastUpdated = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  }
+
+  const area = document.getElementById('kb-status-area');
+  if (area) {
+    area.innerHTML = `
+      <div class="kb-stat"><div><div class="num">${shangSheCount}</div><div class="label">商社数量</div></div></div>
+      <div class="kb-stat"><div><div class="num">${taskCount}</div><div class="label">任务数量</div></div></div>
+      <div class="kb-stat"><div><div class="num" style="font-size:13px;">${lastUpdated}</div><div class="label">最后更新</div></div></div>
+    `;
+  }
+}
+
+// 查找商社信息
+function lookupShangShe(shangSheId) {
+  if (!shangSheId) return null;
+  const kb = loadKB();
+  const entry = kb.shangSheMap[String(shangSheId).trim()];
+  if (!entry) return null;
+
+  const platforms = kb.configData?.platforms || DEFAULT_CONFIG.platforms;
+  const platform = signEntityToPlatform(entry.signEntity, platforms);
+  const taxSource = signEntityToTaxSource(entry.signEntity);
+
+  // 从taskListData中查找匹配该商社编号的任务
+  let matchedTasks = [];
+  if (kb.taskListData && kb.taskListData.length > 0) {
+    // 解析任务条目格式如 "8.司机(0349912)"
+    for (const taskEntry of kb.taskListData) {
+      const match = taskEntry.match(/^(\d+)\.(.+)\((.+)\)$/);
+      if (match && match[3] === String(shangSheId).trim()) {
+        matchedTasks.push({
+          seq: parseInt(match[1]),
+          name: match[2],
+          shangSheId: match[3],
+          fullString: taskEntry  // 保留原始字符串
+        });
+      }
+    }
+  }
+
+  // 如果taskListData没有匹配到，回退到KB的tasks
+  if (matchedTasks.length === 0 && entry.tasks && entry.tasks.length > 0) {
+    const globalTasks = generateGlobalTaskList(kb);
+    for (const task of entry.tasks) {
+      const globalTask = globalTasks.find(t => t.name === task.name && t.shangSheId === String(shangSheId).trim());
+      matchedTasks.push({
+        seq: globalTask ? globalTask.seq : 1,
+        name: task.name,
+        shangSheId: String(shangSheId).trim(),
+        fullString: `${globalTask ? globalTask.seq : 1}.${task.name}(${String(shangSheId).trim()})`
+      });
+    }
+  }
+
+  return {
+    platform: platform,
+    taxSource: taxSource,
+    tasks: entry.tasks || [],
+    matchedTasks: matchedTasks,
+    signEntity: entry.signEntity,
+    feeRate: entry.feeRate,
+    shortName: entry.shortName,
+    fullName: entry.fullName,
+    taxId: entry.taxId
+  };
+}
+
+// 通过纳税人识别号查找商社信息
+function lookupShangSheByTaxId(taxId) {
+  if (!taxId) return null;
+  const kb = loadKB();
+  const trimmedId = String(taxId).trim().toUpperCase();
+  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+    if (entry.taxId && entry.taxId.trim().toUpperCase() === trimmedId) {
+      return lookupShangShe(id);
+    }
+  }
+  return null;
+}
+
+// 通过商社全称或简称查找商社信息（返回所有匹配）
+function lookupShangSheByNameAll(name) {
+  if (!name) return [];
+  const kb = loadKB();
+  const trimmedName = String(name).trim();
+  const results = [];
+  const seen = new Set();
+  // Exact fullName match
+  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+    if (entry.fullName && entry.fullName.trim() === trimmedName && !seen.has(id)) {
+      seen.add(id);
+      results.push({ id, lookup: lookupShangShe(id), matchType: '全称精确' });
+    }
+  }
+  // Exact shortName match
+  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+    if (entry.shortName && entry.shortName.trim() === trimmedName && !seen.has(id)) {
+      seen.add(id);
+      results.push({ id, lookup: lookupShangShe(id), matchType: '简称精确' });
+    }
+  }
+  // Partial match
+  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+    if (seen.has(id)) continue;
+    if ((entry.fullName && entry.fullName.includes(trimmedName)) ||
+        (entry.shortName && entry.shortName.includes(trimmedName)) ||
+        (entry.fullName && trimmedName.includes(entry.fullName.trim())) ||
+        (entry.shortName && trimmedName.includes(entry.shortName.trim()))) {
+      seen.add(id);
+      results.push({ id, lookup: lookupShangShe(id), matchType: '模糊匹配' });
+    }
+  }
+  return results;
+}
+
+// 通过商社全称或简称查找商社信息（返回第一个匹配）
+function lookupShangSheByName(name) {
+  if (!name) return null;
+  const kb = loadKB();
+  const trimmedName = String(name).trim();
+  // First try exact match on fullName
+  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+    if (entry.fullName && entry.fullName.trim() === trimmedName) {
+      return lookupShangShe(id);
+    }
+  }
+  // Then try exact match on shortName
+  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+    if (entry.shortName && entry.shortName.trim() === trimmedName) {
+      return lookupShangShe(id);
+    }
+  }
+  // Then try partial match (name contains or is contained in fullName/shortName)
+  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+    if ((entry.fullName && entry.fullName.includes(trimmedName)) ||
+        (entry.shortName && entry.shortName.includes(trimmedName))) {
+      return lookupShangShe(id);
+    }
+  }
+  // Also try reverse: fullName contains the name
+  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+    if (entry.fullName && trimmedName.includes(entry.fullName.trim())) {
+      return lookupShangShe(id);
+    }
+    if (entry.shortName && trimmedName.includes(entry.shortName.trim())) {
+      return lookupShangShe(id);
+    }
+  }
+  return null;
+}
+
+// 生成全局任务清单（带序号）
+function generateGlobalTaskList(kb) {
+  const entries = Object.values(kb.shangSheMap);
+  const taskList = [];
+  let seq = 1;
+  for (const entry of entries) {
+    for (const task of (entry.tasks || [])) {
+      taskList.push({ seq: seq++, name: task.name, shangSheId: entry.id, content: task.content });
+    }
+  }
+  return taskList;
+}
+
+// 生成配置表sheet数据
+function generateConfigSheet(kb) {
+  // 优先使用KB中上传的配置数据，否则使用默认配置
+  let taxSources, platforms;
+  if (kb.configData && kb.configData.taxSources && kb.configData.taxSources.length > 0) {
+    taxSources = kb.configData.taxSources;
+    platforms = kb.configData.platforms || [];
+  } else {
+    taxSources = DEFAULT_CONFIG.taxSources;
+    platforms = DEFAULT_CONFIG.platforms;
+  }
+
+  const maxLen = Math.max(taxSources.length, platforms.length);
+  const sheetData = [['税源地', '平台']];
+  for (let i = 0; i < maxLen; i++) {
+    sheetData.push([taxSources[i] || '', platforms[i] || '']);
+  }
+  return sheetData;
+}
+
+// 生成任务清单sheet数据
+function generateTaskListSheet(kb) {
+  // 优先使用KB中上传的任务清单数据，否则从shangSheMap生成
+  if (kb.taskListData && kb.taskListData.length > 0) {
+    const sheetData = [['任务清单']];
+    for (const entry of kb.taskListData) {
+      sheetData.push([entry]);
+    }
+    return sheetData;
+  }
+  // 回退：从shangSheMap生成
+  const globalTasks = generateGlobalTaskList(kb);
+  const sheetData = [['任务清单']];
+  for (const task of globalTasks) {
+    sheetData.push([`${task.seq}.${task.name}(${task.shangSheId})`]);
+  }
+  return sheetData;
+}
+
+// 页面加载时更新知识库状态
+updateKBStatus();
 
 // ==================== Column Keywords ====================
 const COL_KEYWORDS = {
-  name:     /姓名|户名|名称|人员|收款人|员工|name|person/i,
-  idCard:   /身份证|身份证号|身份证号码|id\s*card|idcard|证件号/i,
-  phone:    /电话|phone|手机|mobile|联系电话/i,
-  bankName: /开户行|开户银行|银行名称|bank\s*name/i,
-  bankCard: /银行|bank|卡号|bankcard|账号|账户|个人银行卡号/i,
-  amount:   /金额|amount|收入|income|报酬|pay|税前金额|税前收入|税后收入|应发金额|实发金额|计划发放收入|发放金额|付款金额|应发金额\(含税\)|应发金额（含税）/i,
-  gender:   /性别|gender|sex/i,
-  location: /开户地|开户所属地|银行所属地|税源地/i,
-  note:     /备注|note|说明|remark/i,
+  name:       /姓名|户名|名称|人员|收款人|员工|name|person/i,
+  idCard:     /身份证|身份证号|身份证号码|id\s*card|idcard|证件号/i,
+  phone:      /电话|phone|手机|mobile|联系电话/i,
+  bankName:   /开户行|开户银行|银行名称|bank\s*name/i,
+  bankCard:   /银行|bank|卡号|bankcard|账号|账户|个人银行卡号/i,
+  amount:     /金额|amount|收入|income|报酬|pay|税前金额|税前收入|税后收入|应发金额|实发金额|计划发放收入|发放金额|付款金额|应发金额\(含税\)|应发金额（含税）/i,
+  gender:     /性别|gender|sex/i,
+  location:   /开户地|开户所属地|银行所属地|税源地/i,
+  note:       /备注|note|说明|remark/i,
+  shangSheId: /商社编号|商社代码|商户编号/i,
+  clientName: /客户名称|公司名称|委托方名称?|甲方名称?/i,
+  taxId: /纳税人识别号|统一信用代码|统一社会信用代码|税号|信用代码/i,
 };
 
 const COL_TYPE_LABELS = {
@@ -230,6 +882,9 @@ const COL_TYPE_LABELS = {
   gender:     '⚧ 性别',
   location:   '📍 开户地/税源地',
   note:       '📝 备注',
+  shangSheId: '🏢 商社编号',
+  clientName: '🏢 客户名称',
+  taxId: '🪪 纳税人识别号',
 };
 
 // ==================== Target Templates ====================
@@ -253,7 +908,7 @@ const TEMPLATES = {
     icon: '🤝',
     desc: '详细模版（保留配置表和任务清单）',
     headers: ['出错信息', '平台', '商社编号', '姓名', '身份证号码', '性别', '任务清单', '税源地', '工种', '手机号码', '账号', '银行名称', '银行所属地', '税前金额', '个税金额', '商业保险', '备注'],
-    fieldMap: { name: '姓名', idCard: '身份证号码', gender: '性别', phone: '手机号码', bankCard: '账号', bankName: '银行名称', location: '银行所属地', amount: '税前金额', note: '备注' },
+    fieldMap: { name: '姓名', idCard: '身份证号码', gender: '性别', phone: '手机号码', bankCard: '账号', bankName: '银行名称', location: '银行所属地', amount: '税前金额', note: '备注', shangSheId: '商社编号' },
   },
   custom: {
     name: '自定义模版',
@@ -868,11 +1523,180 @@ function generateOutput() {
     });
   });
 
+  // 云杉模版：知识库自动填充
+  const unmatchedRows = [];
+  if (state.targetTemplate === 'youyi') {
+    // 云杉模版列索引：0-出错信息, 1-平台, 2-商社编号, 3-姓名, 4-身份证号码,
+    //   5-性别, 6-任务清单, 7-税源地, 8-工种, 9-手机号码, 10-账号,
+    //   11-银行名称, 12-银行所属地, 13-税前金额, 14-个税金额, 15-商业保险, 16-备注
+    const platformIdx = tpl.headers.indexOf('平台');       // 1
+    const shangSheIdx = tpl.headers.indexOf('商社编号');   // 2
+    const taskListIdx = tpl.headers.indexOf('任务清单');   // 6
+    const taxSourceIdx = tpl.headers.indexOf('税源地');    // 7
+    const workTypeIdx = tpl.headers.indexOf('工种');       // 8
+
+    // 尝试从源文件头部行中检测客户名称
+    let detectedClientName = '';
+    for (const src of state.sources.filter(s => s.selected)) {
+      const allRows = src.rows;
+      for (let ri = 0; ri < allRows.length; ri++) {
+        const row = allRows[ri] || [];
+        for (let ci = 0; ci < row.length; ci++) {
+          const cellStr = String(row[ci] || '').trim();
+          // 模式1: 同一单元格 "客户名称：xxx"
+          const m1 = cellStr.match(/(?:客户名称|公司名称|委托方|甲方)[：:]\s*(.+)/);
+          if (m1 && m1[1]) {
+            detectedClientName = m1[1].trim();
+            break;
+          }
+          // 模式2: 标签在当前格，值在下一格 "客户名称：" + "xxx"
+          if (/^(?:客户名称|公司名称|委托方|甲方)[：:]?$/.test(cellStr)) {
+            const nextVal = row[ci + 1] ? String(row[ci + 1]).trim() : '';
+            if (nextVal) {
+              detectedClientName = nextVal;
+              break;
+            }
+          }
+        }
+        if (detectedClientName) break;
+      }
+      if (detectedClientName) break;
+    }
+
+    // 也尝试从列映射中获取客户名称值（如果用户映射了clientName列）
+    let mappedClientName = '';
+    sourcesData.forEach(({ dataRows, typeToCol }) => {
+      if (mappedClientName) return;
+      if (typeToCol.clientName != null) {
+        const firstVal = dataRows[0]?.[typeToCol.clientName];
+        if (firstVal) mappedClientName = String(firstVal).trim();
+      }
+    });
+
+    // 优先使用头部检测的客户名称，其次使用列映射的
+    const clientName = detectedClientName || mappedClientName;
+
+    // 尝试从源文件头部行中检测纳税人识别号
+    let detectedTaxId = '';
+    for (const src of state.sources.filter(s => s.selected)) {
+      const allRows = src.rows;
+      for (let ri = 0; ri < allRows.length; ri++) {
+        const row = allRows[ri] || [];
+        for (let ci = 0; ci < row.length; ci++) {
+          const cellStr = String(row[ci] || '').trim();
+          // 模式1: 同一单元格 "统一信用代码：xxx"
+          const m1 = cellStr.match(/(?:统一信用代码|纳税人识别号|统一社会信用代码|税号|信用代码)[：:]\s*(.+)/);
+          if (m1 && m1[1]) {
+            detectedTaxId = m1[1].trim();
+            break;
+          }
+          // 模式2: 标签在当前格，值在下一格 "统一信用代码" + "xxx"
+          if (/^(?:统一信用代码|纳税人识别号|统一社会信用代码|税号|信用代码)[：:]?$/.test(cellStr)) {
+            const nextVal = row[ci + 1] ? String(row[ci + 1]).trim() : '';
+            if (nextVal) {
+              detectedTaxId = nextVal;
+              break;
+            }
+          }
+        }
+        if (detectedTaxId) break;
+      }
+      if (detectedTaxId) break;
+    }
+
+    // 也尝试从列映射中获取纳税人识别号
+    let mappedTaxId = '';
+    sourcesData.forEach(({ dataRows, typeToCol }) => {
+      if (mappedTaxId) return;
+      if (typeToCol.taxId != null) {
+        const firstVal = dataRows[0]?.[typeToCol.taxId];
+        if (firstVal) mappedTaxId = String(firstVal).trim();
+      }
+    });
+    const taxIdValue = detectedTaxId || mappedTaxId;
+
+    // 通过纳税人识别号查找
+    let taxIdLookup = null;
+    if (taxIdValue) {
+      taxIdLookup = lookupShangSheByTaxId(taxIdValue);
+    }
+
+    // 通过客户名称查找（可能返回多个匹配）
+    let clientNameLookups = [];
+    if (clientName) {
+      clientNameLookups = lookupShangSheByNameAll(clientName);
+    }
+
+    // 确定最佳匹配
+    let bestLookup = null;
+    let candidates = [];
+
+    if (taxIdLookup) {
+      bestLookup = taxIdLookup;
+    } else if (clientNameLookups.length === 1) {
+      bestLookup = clientNameLookups[0].lookup;
+    } else if (clientNameLookups.length > 1) {
+      // 多个匹配 - 存储为候选供手动选择
+      candidates = clientNameLookups.map(c => ({ id: c.id, label: `${c.id} - ${c.lookup.shortName || c.lookup.fullName}`, matchType: c.matchType }));
+    }
+
+    state.shangSheCandidates = candidates;
+
+    // 填充商社信息的辅助函数
+    function fillShangSheInfo(out, lookup) {
+      if (!lookup) return false;
+      // 自动填充平台
+      if (platformIdx >= 0 && !out[platformIdx] && lookup.platform) {
+        out[platformIdx] = lookup.platform;
+      }
+      // 自动填充税源地
+      if (taxSourceIdx >= 0 && !out[taxSourceIdx] && lookup.taxSource) {
+        out[taxSourceIdx] = lookup.taxSource;
+      }
+      // 自动填充任务清单和工种
+      if (lookup.matchedTasks.length > 0) {
+        const firstTask = lookup.matchedTasks[0];
+        if (taskListIdx >= 0 && !out[taskListIdx]) {
+          out[taskListIdx] = firstTask.fullString;
+        }
+        if (workTypeIdx >= 0 && !out[workTypeIdx]) {
+          out[workTypeIdx] = firstTask.name;
+        }
+      }
+      // 如果商社编号列为空，也填充商社编号
+      if (shangSheIdx >= 0 && !out[shangSheIdx]) {
+        // 从lookup中获取商社编号（需要从KB中查找）
+        const kb = loadKB();
+        for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+          if (entry.fullName === lookup.fullName || entry.shortName === lookup.shortName) {
+            out[shangSheIdx] = id;
+            break;
+          }
+        }
+      }
+      return true;
+    }
+
+    outputRows.forEach((out, rowIdx) => {
+      const shangSheId = shangSheIdx >= 0 ? out[shangSheIdx] : '';
+      if (shangSheId) {
+        const lookup = lookupShangShe(shangSheId);
+        if (lookup) { fillShangSheInfo(out, lookup); return; }
+      }
+      if (bestLookup) {
+        fillShangSheInfo(out, bestLookup);
+        return;
+      }
+      unmatchedRows.push(rowIdx);
+    });
+  }
+
   // 身边云: do NOT auto-fill merchant order number (leave empty per user request)
 
   state.outputRows = outputRows;
   state.outputHeaders = tpl.headers;
   state.cleanCount = cleanCount;
+  state.unmatchedRows = unmatchedRows;
   showExportStep();
 }
 
@@ -964,18 +1788,134 @@ function showExportStep() {
   const headers = state.outputHeaders;
   const rows = state.outputRows;
   const tplName = state.targetTemplate === 'custom' ? '自定义' : TEMPLATES[state.targetTemplate].name;
+  const unmatchedSet = new Set(state.unmatchedRows || []);
+
+  // 云杉模版：找到商社编号列索引用于高亮
+  const shangSheColIdx = (state.targetTemplate === 'youyi') ? headers.indexOf('商社编号') : -1;
+
+  // 云杉模版：获取平台和任务清单数据用于下拉框
+  const isYouyi = state.targetTemplate === 'youyi';
+  let allPlatforms = [];
+  let allTaxSources = [];
+  if (isYouyi) {
+    const kb = loadKB();
+    if (kb.configData && kb.configData.platforms && kb.configData.platforms.length > 0) {
+      allPlatforms = kb.configData.platforms;
+      allTaxSources = kb.configData.taxSources || [];
+    } else {
+      allPlatforms = DEFAULT_CONFIG.platforms;
+      allTaxSources = DEFAULT_CONFIG.taxSources;
+    }
+  }
 
   const pv = Math.min(rows.length, 8);
   let headHTML = headers.map(h=>`<th>${h}</th>`).join('');
   let bodyHTML = '';
   for (let ri = 0; ri < pv; ri++) {
-    bodyHTML += '<tr>' + rows[ri].map(c=>`<td>${c||'<span style="color:var(--text2);opacity:0.4;">—</span>'}</td>`).join('') + '</tr>';
+    const isUnmatched = unmatchedSet.has(ri);
+    const rowClass = isUnmatched ? ' class="unmatched-row"' : '';
+    bodyHTML += `<tr${rowClass}>` + rows[ri].map((c, ci) => {
+      let cellContent = c || '<span style="color:var(--text2);opacity:0.4;">—</span>';
+
+      // 云杉模版：平台列（column 1）显示下拉框
+      if (isYouyi && ci === 1) {
+        const currentVal = c || '';
+        let optionsHTML = '<option value="">未选择</option>';
+        for (const p of allPlatforms) {
+          optionsHTML += `<option value="${p}" ${p === currentVal ? 'selected' : ''}>${p}</option>`;
+        }
+        cellContent = `<select onchange="onPlatformChange(this, ${ri})">${optionsHTML}</select>`;
+      }
+      // 云杉模版：任务清单列（column 6）显示下拉框
+      else if (isYouyi && ci === 6) {
+        const currentVal = c || '';
+        const shangSheId = rows[ri][2] || ''; // column 2 = 商社编号
+        const matchedTasks = getTasksForShangShe(shangSheId);
+        let optionsHTML = '<option value="">未选择</option>';
+        for (const task of matchedTasks) {
+          optionsHTML += `<option value="${task.fullString}" ${task.fullString === currentVal ? 'selected' : ''}>${task.fullString}</option>`;
+        }
+        cellContent = `<select onchange="onTaskChange(this, ${ri})">${optionsHTML}</select>`;
+      }
+      // 未匹配行的商社编号列添加"未匹配"标记
+      else if (isUnmatched && ci === shangSheColIdx && c) {
+        cellContent = c + '<span class="unmatched-badge">未匹配</span>';
+      }
+      return `<td>${cellContent}</td>`;
+    }).join('') + '</tr>';
   }
   if (rows.length > pv) bodyHTML += `<tr><td colspan="${headers.length}" style="text-align:center;color:var(--text2);font-size:12px;">… 还有 ${rows.length-pv} 行</td></tr>`;
 
+  // 云杉模版：显示知识库匹配统计
+  let kbMatchHTML = '';
+  if (isYouyi && unmatchedSet.size > 0) {
+    kbMatchHTML = `<div class="status-msg info">⚠️ 知识库匹配：${rows.length - unmatchedSet.size}/${rows.length} 行已匹配，${unmatchedSet.size} 行商社编号未在知识库中找到（橙色高亮行）</div>`;
+  } else if (isYouyi && rows.length > 0) {
+    kbMatchHTML = `<div class="status-msg success">✅ 知识库匹配：全部 ${rows.length} 行已成功匹配</div>`;
+  }
+
+  // 云杉模版：手动匹配商社选择器（仅在有未匹配行时显示）- 可搜索下拉框
+  let manualShangSheHTML = '';
+  if (isYouyi && unmatchedSet.size > 0) {
+    const kb = loadKB();
+    // Build candidates: if we have narrowed candidates from auto-matching, show those first
+    let candidateList = [];
+    if (state.shangSheCandidates && state.shangSheCandidates.length > 0) {
+      candidateList = state.shangSheCandidates;
+    }
+    // Also prepare full list for search
+    const fullList = [];
+    for (const [id, entry] of Object.entries(kb.shangSheMap)) {
+      fullList.push({ id, label: `${id} - ${entry.shortName || entry.fullName}`, taxId: entry.taxId || '', fullName: entry.fullName || '', shortName: entry.shortName || '' });
+    }
+
+    const candidateHint = candidateList.length > 0
+      ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">💡 已根据客户信息缩小范围，找到 ${candidateList.length} 个候选商社（也可搜索其他商社）</div>`
+      : '';
+
+    manualShangSheHTML = `
+    <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🔗 手动匹配商社</div>
+      ${candidateHint}
+      <div style="position:relative;">
+        <div style="display:flex;gap:10px;align-items:center;">
+          <div style="flex:1;position:relative;">
+            <input type="text" id="shangshe-search" placeholder="输入编号、名称或税号搜索..."
+              style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;"
+              oninput="filterShangSheList()" onfocus="showShangSheDropdown()" autocomplete="off">
+            <input type="hidden" id="shangshe-selected-id" value="">
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="applyManualShangShe()">应用</button>
+        </div>
+        <div id="shangshe-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:240px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,0.3);">
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // 云杉模版：批量设置平台控件 - 可搜索下拉框
+  let batchControlsHTML = '';
+  if (isYouyi && rows.length > 0) {
+    batchControlsHTML = `
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;position:relative;">
+      <span style="font-size:13px;font-weight:600;color:var(--text2);">批量设置平台:</span>
+      <div style="position:relative;min-width:200px;">
+        <input type="text" id="platform-search" placeholder="搜索平台..."
+          style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;"
+          oninput="filterPlatformList()" onfocus="showPlatformDropdown()" autocomplete="off">
+        <input type="hidden" id="platform-selected-val" value="">
+        <div id="platform-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:200px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,0.3);"></div>
+      </div>
+      <button class="btn btn-secondary btn-sm" onclick="applyPlatformToAll()">应用到所有行</button>
+    </div>`;
+  }
+
   container.innerHTML = `
     <div class="status-msg success">✅ 转换完成 — ${tplName}（${rows.length} 行）</div>
+    ${kbMatchHTML}
+    ${manualShangSheHTML}
     ${state.cleanCount > 0 ? `<div class="status-msg info">🧹 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
+    ${batchControlsHTML}
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px;">
       <table class="result-table"><thead><tr>${headHTML}</tr></thead><tbody>${bodyHTML}</tbody></table>
     </div>
@@ -984,7 +1924,306 @@ function showExportStep() {
       <button class="btn btn-secondary" onclick="exportCSV()">📥 导出 CSV</button>
       <button class="btn btn-secondary" onclick="goBack('step-export')">⬅️ 返回</button>
     </div>`;
+
+  // 设置搜索下拉框所需的全局变量
+  if (isYouyi) {
+    // 设置商社列表数据
+    window._shangSheFullList = fullList;
+    window._shangSheCandidates = candidateList;
+    // 设置平台列表数据
+    window._platformFullList = allPlatforms.map(p => ({ value: p, label: p }));
+  }
 }
+
+// 获取某个商社编号对应的所有任务（从taskListData或KB tasks）
+function getTasksForShangShe(shangSheId) {
+  if (!shangSheId) return [];
+  const kb = loadKB();
+  let matchedTasks = [];
+
+  // 优先从taskListData查找
+  if (kb.taskListData && kb.taskListData.length > 0) {
+    for (const taskEntry of kb.taskListData) {
+      const match = taskEntry.match(/^(\d+)\.(.+)\((.+)\)$/);
+      if (match && match[3] === String(shangSheId).trim()) {
+        matchedTasks.push({
+          seq: parseInt(match[1]),
+          name: match[2],
+          shangSheId: match[3],
+          fullString: taskEntry
+        });
+      }
+    }
+  }
+
+  // 回退到KB的tasks
+  if (matchedTasks.length === 0) {
+    const entry = kb.shangSheMap[String(shangSheId).trim()];
+    if (entry && entry.tasks && entry.tasks.length > 0) {
+      const globalTasks = generateGlobalTaskList(kb);
+      for (const task of entry.tasks) {
+        const globalTask = globalTasks.find(t => t.name === task.name && t.shangSheId === String(shangSheId).trim());
+        matchedTasks.push({
+          seq: globalTask ? globalTask.seq : 1,
+          name: task.name,
+          shangSheId: String(shangSheId).trim(),
+          fullString: `${globalTask ? globalTask.seq : 1}.${task.name}(${String(shangSheId).trim()})`
+        });
+      }
+    }
+  }
+
+  return matchedTasks;
+}
+
+// 平台切换处理（保留兼容）
+function onPlatformChange(selectEl, rowIdx) {
+  const newVal = selectEl.value;
+  state.outputRows[rowIdx][1] = newVal; // 更新平台列
+
+  // 根据新平台更新税源地（column 7）
+  const kb = loadKB();
+  let taxSources = [], platforms = [];
+  if (kb.configData && kb.configData.platforms && kb.configData.platforms.length > 0) {
+    taxSources = kb.configData.taxSources || [];
+    platforms = kb.configData.platforms;
+  } else {
+    taxSources = DEFAULT_CONFIG.taxSources;
+    platforms = DEFAULT_CONFIG.platforms;
+  }
+
+  if (newVal) {
+    // 在platforms数组中查找该平台的行索引，使用对应的taxSource
+    const platIdx = platforms.indexOf(newVal);
+    if (platIdx >= 0 && taxSources[platIdx]) {
+      state.outputRows[rowIdx][7] = taxSources[platIdx];
+    }
+  }
+}
+
+// 任务切换处理
+function onTaskChange(selectEl, rowIdx) {
+  const newVal = selectEl.value;
+  state.outputRows[rowIdx][6] = newVal; // 更新任务清单列
+
+  // 从任务字符串中提取任务名称，更新工种（column 8）
+  if (newVal) {
+    const match = newVal.match(/^\d+\.(.+)\(.+\)$/);
+    if (match) {
+      state.outputRows[rowIdx][8] = match[1];
+    }
+  }
+}
+
+// 批量设置平台到所有行
+function applyPlatformToAll() {
+  const hidden = document.getElementById('platform-selected-val');
+  const platformVal = hidden ? hidden.value : '';
+  if (!platformVal) {
+    alert('请先选择一个平台');
+    return;
+  }
+
+  const kb = loadKB();
+  let taxSources = [], platforms = [];
+  if (kb.configData && kb.configData.platforms && kb.configData.platforms.length > 0) {
+    taxSources = kb.configData.taxSources || [];
+    platforms = kb.configData.platforms;
+  } else {
+    taxSources = DEFAULT_CONFIG.taxSources;
+    platforms = DEFAULT_CONFIG.platforms;
+  }
+
+  // 查找对应的税源地
+  let taxSource = '';
+  const platIdx = platforms.indexOf(platformVal);
+  if (platIdx >= 0 && taxSources[platIdx]) {
+    taxSource = taxSources[platIdx];
+  }
+
+  // 应用到所有行
+  for (let i = 0; i < state.outputRows.length; i++) {
+    state.outputRows[i][1] = platformVal; // 平台列
+    if (taxSource) {
+      state.outputRows[i][7] = taxSource; // 税源地列
+    }
+  }
+
+  // 刷新预览
+  showExportStep();
+}
+
+// 手动匹配商社 - 将选中的商社信息应用到所有未匹配行
+function applyManualShangShe() {
+  const hidden = document.getElementById('shangshe-selected-id');
+  const selectedId = hidden ? hidden.value : '';
+  if (!selectedId) {
+    alert('请先选择一个商社');
+    return;
+  }
+
+  const lookup = lookupShangShe(selectedId);
+  if (!lookup) {
+    alert('未找到该商社的信息');
+    return;
+  }
+
+  const headers = state.outputHeaders;
+  const shangSheIdx = headers.indexOf('商社编号');   // 2
+  const platformIdx = headers.indexOf('平台');       // 1
+  const taskListIdx = headers.indexOf('任务清单');   // 6
+  const taxSourceIdx = headers.indexOf('税源地');    // 7
+  const workTypeIdx = headers.indexOf('工种');       // 8
+
+  const unmatchedSet = new Set(state.unmatchedRows || []);
+
+  // 对所有未匹配行应用商社信息
+  state.outputRows.forEach((out, rowIdx) => {
+    if (!unmatchedSet.has(rowIdx)) return;
+
+    // 填充商社编号
+    if (shangSheIdx >= 0) {
+      out[shangSheIdx] = selectedId;
+    }
+    // 填充平台
+    if (platformIdx >= 0 && !out[platformIdx] && lookup.platform) {
+      out[platformIdx] = lookup.platform;
+    }
+    // 填充税源地
+    if (taxSourceIdx >= 0 && !out[taxSourceIdx] && lookup.taxSource) {
+      out[taxSourceIdx] = lookup.taxSource;
+    }
+    // 填充任务清单和工种
+    if (lookup.matchedTasks.length > 0) {
+      const firstTask = lookup.matchedTasks[0];
+      if (taskListIdx >= 0 && !out[taskListIdx]) {
+        out[taskListIdx] = firstTask.fullString;
+      }
+      if (workTypeIdx >= 0 && !out[workTypeIdx]) {
+        out[workTypeIdx] = firstTask.name;
+      }
+    }
+  });
+
+  // 从未匹配列表中移除已处理的行
+  state.unmatchedRows = state.unmatchedRows.filter(rowIdx => !unmatchedSet.has(rowIdx));
+
+  // 刷新预览
+  showExportStep();
+}
+
+// ==================== Searchable Combobox Functions ====================
+
+// 商社搜索下拉框
+function showShangSheDropdown() {
+  filterShangSheList();
+}
+
+function filterShangSheList() {
+  const input = document.getElementById('shangshe-search');
+  const dropdown = document.getElementById('shangshe-dropdown');
+  if (!input || !dropdown) return;
+
+  const query = input.value.trim().toLowerCase();
+  // If candidates exist, search within candidates first; otherwise search full list
+  let list = (window._shangSheCandidates && window._shangSheCandidates.length > 0)
+    ? window._shangSheCandidates : window._shangSheFullList || [];
+
+  let filtered = list;
+  if (query) {
+    filtered = list.filter(item =>
+      item.id.toLowerCase().includes(query) ||
+      (item.label && item.label.toLowerCase().includes(query)) ||
+      (item.taxId && item.taxId.toLowerCase().includes(query)) ||
+      (item.fullName && item.fullName.toLowerCase().includes(query)) ||
+      (item.shortName && item.shortName.toLowerCase().includes(query))
+    );
+  }
+
+  filtered = filtered.slice(0, 50);
+
+  if (filtered.length === 0) {
+    dropdown.innerHTML = '<div style="padding:10px;text-align:center;color:var(--text2);font-size:12px;">无匹配结果</div>';
+    dropdown.style.display = 'block';
+    return;
+  }
+
+  dropdown.style.display = 'block';
+  dropdown.innerHTML = filtered.map(item => {
+    const escapedLabel = (item.label || item.id).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+    return `<div class="ss-dropdown-item" onclick="selectShangShe('${item.id}', '${escapedLabel}')">
+      <span class="ss-id">${item.id}</span>
+      <span class="ss-name">${item.shortName || item.label || ''}</span>
+      ${item.taxId ? `<span class="ss-taxid">税号: ${item.taxId}</span>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function selectShangShe(id, label) {
+  const input = document.getElementById('shangshe-search');
+  const hidden = document.getElementById('shangshe-selected-id');
+  const dropdown = document.getElementById('shangshe-dropdown');
+  if (input) input.value = label;
+  if (hidden) hidden.value = id;
+  if (dropdown) dropdown.style.display = 'none';
+}
+
+// 平台搜索下拉框
+function filterPlatformList() {
+  const input = document.getElementById('platform-search');
+  const dropdown = document.getElementById('platform-dropdown');
+  if (!input || !dropdown) return;
+
+  const query = input.value.trim().toLowerCase();
+  const list = window._platformFullList || [];
+
+  let filtered = list;
+  if (query) {
+    filtered = list.filter(item => item.label.toLowerCase().includes(query));
+  }
+
+  if (filtered.length === 0) {
+    dropdown.innerHTML = '<div style="padding:10px;text-align:center;color:var(--text2);font-size:12px;">无匹配结果</div>';
+    dropdown.style.display = 'block';
+    return;
+  }
+
+  dropdown.style.display = 'block';
+  dropdown.innerHTML = filtered.map(item =>
+    `<div class="ss-dropdown-item" onclick="selectPlatform('${item.value.replace(/'/g, "\\'")}')">
+      <span class="ss-name">${item.label}</span>
+    </div>`
+  ).join('');
+}
+
+function showPlatformDropdown() {
+  filterPlatformList();
+}
+
+function selectPlatform(value) {
+  const input = document.getElementById('platform-search');
+  const hidden = document.getElementById('platform-selected-val');
+  const dropdown = document.getElementById('platform-dropdown');
+  if (input) input.value = value;
+  if (hidden) hidden.value = value;
+  if (dropdown) dropdown.style.display = 'none';
+}
+
+// 点击外部关闭下拉框
+document.addEventListener('click', function(e) {
+  // 关闭商社下拉框
+  const ssDropdown = document.getElementById('shangshe-dropdown');
+  const ssInput = document.getElementById('shangshe-search');
+  if (ssDropdown && ssInput && !ssInput.contains(e.target) && !ssDropdown.contains(e.target)) {
+    ssDropdown.style.display = 'none';
+  }
+  // 关闭平台下拉框
+  const pDropdown = document.getElementById('platform-dropdown');
+  const pInput = document.getElementById('platform-search');
+  if (pDropdown && pInput && !pInput.contains(e.target) && !pDropdown.contains(e.target)) {
+    pDropdown.style.display = 'none';
+  }
+});
 
 // ==================== Export Helpers ====================
 function getTodayStr() {
@@ -1104,52 +2343,40 @@ async function exportShenbianyun(headers, rows, fileName) {
   await saveWorkbook(wb, fileName);
 }
 
-// 云杉公司: Keep header+sample, data starts row 3, preserve 配置表 and 任务清单
+// 云杉公司: 从头生成费用明细 + 动态生成配置表和任务清单
 async function exportYouyi(headers, rows, fileName) {
-  // Load original template to preserve structure
-  const tplFile = state.templateFiles['云杉公司导入模版.xlsx'];
-  let wb;
-  if (tplFile) {
-    wb = XLSX.read(tplFile, { type: 'array' });
-    const ws = wb.Sheets['费用明细'];
-    // Get existing data range
-    const range = XLSX.utils.decode_range(ws['!ref'] || 'A1');
-    // Find the last row with actual data (skip empty rows after header)
-    let lastDataRow = 1; // 0-indexed, row 1 = Excel row 2
-    for (let r = range.s.r + 1; r <= range.e.r; r++) {
-      const cell = ws[XLSX.utils.encode_cell({r, c: 0})];
-      if (cell && cell.v != null && String(cell.v).trim()) lastDataRow = r;
-    }
-    // Clear rows after header (row 0 = header, row 1 = sample, clear from row 1)
-    for (let r = 1; r <= range.e.r; r++) {
-      for (let c = range.s.c; c <= range.e.c; c++) {
-        const addr = XLSX.utils.encode_cell({r, c});
-        if (ws[addr]) delete ws[addr];
-      }
-    }
-    // Write new data starting from row 1 (0-indexed)
-    rows.forEach((row, ri) => {
-      row.forEach((val, ci) => {
-        if (val) ws[XLSX.utils.encode_cell({r: ri + 1, c: ci})] = { t: 's', v: val };
-      });
-    });
-    // Update range
-    const newEndRow = rows.length;
-    const newEndCol = headers.length - 1;
-    ws['!ref'] = XLSX.utils.encode_range({s:{r:0,c:0}, e:{r:newEndRow, c:newEndCol}});
-  } else {
-    // No template file, generate from scratch
-    const wsData = [headers, ...rows];
-    const ws = XLSX.utils.aoa_to_sheet(wsData);
-    wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, '费用明细');
-    // Add empty config sheets
-    const cfg = XLSX.utils.aoa_to_sheet([['税源地','平台']]);
-    XLSX.utils.book_append_sheet(wb, cfg, '配置表');
-    const task = XLSX.utils.aoa_to_sheet([['任务清单']]);
-    XLSX.utils.book_append_sheet(wb, task, '任务清单');
-  }
+  const kb = loadKB();
+  const wb = XLSX.utils.book_new();
+
+  // 1. 费用明细 sheet：表头 + 数据行
+  const wsData = [headers, ...rows];
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = headers.map((h, i) => {
+    let max = h.length;
+    rows.forEach(r => { const l = String(r[i]||'').length; if (l > max) max = l; });
+    return { wch: Math.min(max + 2, 30) };
+  });
+  XLSX.utils.book_append_sheet(wb, ws, '费用明细');
+
+  // 2. 配置表 sheet：从知识库动态生成
+  const configData = generateConfigSheet(kb);
+  const cfgWs = XLSX.utils.aoa_to_sheet(configData);
+  cfgWs['!cols'] = [{ wch: 20 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, cfgWs, '配置表');
+
+  // 3. 任务清单 sheet：从知识库动态生成
+  const taskData = generateTaskListSheet(kb);
+  const taskWs = XLSX.utils.aoa_to_sheet(taskData);
+  taskWs['!cols'] = [{ wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, taskWs, '任务清单');
+
   await saveWorkbook(wb, fileName);
+
+  // Task 6: 导出后自动附加知识库备份
+  const shangSheCount = Object.keys(kb.shangSheMap).length;
+  if (shangSheCount > 0) {
+    exportKBToJSON();
+  }
 }
 
 // Generic: just headers + data
@@ -1183,6 +2410,7 @@ function resetAll() {
     sources: [], previewSourceId: '', pendingFiles: 0, accumFileCount: 0,
     mappingState: null, targetTemplate: null, customFields: [],
     outputRows: null, outputHeaders: null, templateFiles: {}, cleanCount: 0,
+    unmatchedRows: [], shangSheCandidates: [],
   });
   ['accum-indicator','step-mapping','step-template','step-export'].forEach(id =>
     document.getElementById(id).classList.add('hidden'));

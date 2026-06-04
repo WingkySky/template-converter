@@ -270,6 +270,9 @@
 
 <script>
 // ==================== State ====================
+const DEFAULT_PREVIEW_ROW_LIMIT = 8;
+const PREVIEW_ROW_INCREMENT = 20;
+
 const state = {
   sources: [],
   previewSourceId: '',
@@ -282,6 +285,7 @@ const state = {
   outputHeaders: null,
   outputRowMeta: [],
   selectedNoteRows: [],
+  previewRowLimit: DEFAULT_PREVIEW_ROW_LIMIT,
   cleanCount: 0,
   // Template file data (ArrayBuffer) for preservation-based export
   templateFiles: {},
@@ -1861,6 +1865,7 @@ function generateOutput() {
   state.cleanCount = cleanCount;
   state.unmatchedRows = unmatchedRows;
   state.selectedNoteRows = [];
+  state.previewRowLimit = DEFAULT_PREVIEW_ROW_LIMIT;
   showExportStep();
 }
 
@@ -1916,6 +1921,7 @@ function genCustom() {
   });
   state.cleanCount = cleanCount;
   state.selectedNoteRows = [];
+  state.previewRowLimit = DEFAULT_PREVIEW_ROW_LIMIT;
   showExportStep();
 }
 
@@ -2007,7 +2013,8 @@ function showExportStep() {
     });
   }
 
-  const pv = Math.min(rows.length, 8);
+  const previewLimit = Math.max(DEFAULT_PREVIEW_ROW_LIMIT, Number(state.previewRowLimit) || DEFAULT_PREVIEW_ROW_LIMIT);
+  const pv = Math.min(rows.length, previewLimit);
   let headHTML = headers.map(h=>`<th>${h}</th>`).join('');
   if (hasNoteColumn) {
     const allVisibleSelected = visiblePreviewRowCount() > 0 && Array.from({ length: visiblePreviewRowCount() }, (_, i) => i).every(i => selectedNoteSet.has(i));
@@ -2065,7 +2072,17 @@ function showExportStep() {
     }).join('');
     bodyHTML += `<tr${rowClass}>${rowHTML}</tr>`;
   }
-  if (rows.length > pv) bodyHTML += `<tr><td colspan="${headers.length + (hasNoteColumn ? 1 : 0)}" style="text-align:center;color:var(--text2);font-size:12px;">… 还有 ${rows.length-pv} 行</td></tr>`;
+  const hiddenRowCount = rows.length - pv;
+  if (rows.length > DEFAULT_PREVIEW_ROW_LIMIT) {
+    const previewControls = `
+      <div style="display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;">
+        <span style="color:var(--text2);font-size:12px;">已预览 ${pv} / ${rows.length} 行${hiddenRowCount > 0 ? `，还有 ${hiddenRowCount} 行` : ''}</span>
+        ${hiddenRowCount > 0 ? `<button class="btn btn-secondary btn-sm" onclick="showMorePreviewRows()">预览更多</button>` : ''}
+        ${hiddenRowCount > 0 ? `<button class="btn btn-secondary btn-sm" onclick="showAllPreviewRows()">全部展开</button>` : ''}
+        ${pv > DEFAULT_PREVIEW_ROW_LIMIT ? `<button class="btn btn-secondary btn-sm" onclick="collapsePreviewRows()">收起预览</button>` : ''}
+      </div>`;
+    bodyHTML += `<tr><td colspan="${headers.length + (hasNoteColumn ? 1 : 0)}" style="text-align:center;padding:12px;">${previewControls}</td></tr>`;
+  }
 
   // 云杉模版：显示知识库匹配统计
   let kbMatchHTML = '';
@@ -2145,6 +2162,7 @@ function showExportStep() {
         <option value="append">追加备注</option>
       </select>
       <button class="btn btn-primary btn-sm" onclick="applyBatchRemark()">应用备注</button>
+      <button class="btn btn-red btn-sm" onclick="clearSelectedRemarks()">清空备注</button>
     </div>`;
   }
 
@@ -2334,7 +2352,23 @@ function getNoteColIdx() {
 }
 
 function visiblePreviewRowCount() {
-  return Math.min((state.outputRows || []).length, 8);
+  return Math.min((state.outputRows || []).length, Math.max(DEFAULT_PREVIEW_ROW_LIMIT, Number(state.previewRowLimit) || DEFAULT_PREVIEW_ROW_LIMIT));
+}
+
+function showMorePreviewRows() {
+  const total = (state.outputRows || []).length;
+  state.previewRowLimit = Math.min(total, visiblePreviewRowCount() + PREVIEW_ROW_INCREMENT);
+  showExportStep();
+}
+
+function showAllPreviewRows() {
+  state.previewRowLimit = (state.outputRows || []).length;
+  showExportStep();
+}
+
+function collapsePreviewRows() {
+  state.previewRowLimit = DEFAULT_PREVIEW_ROW_LIMIT;
+  showExportStep();
 }
 
 function setSelectedNoteRows(rows) {
@@ -2439,6 +2473,26 @@ function applyBatchRemark() {
     } else {
       row[noteIdx] = nextVal;
     }
+  });
+
+  showExportStep();
+}
+
+function clearSelectedRemarks() {
+  const noteIdx = getNoteColIdx();
+  if (noteIdx < 0) {
+    alert('当前模版没有备注列');
+    return;
+  }
+  const selected = state.selectedNoteRows || [];
+  if (!selected.length) {
+    alert('请先选择要清空备注的记录，或点击“全选全部记录”');
+    return;
+  }
+
+  selected.forEach(rowIdx => {
+    const row = state.outputRows?.[rowIdx];
+    if (row) row[noteIdx] = '';
   });
 
   showExportStep();
@@ -2750,7 +2804,7 @@ function resetAll() {
   Object.assign(state, {
     sources: [], previewSourceId: '', pendingFiles: 0, accumFileCount: 0,
     mappingState: null, targetTemplate: null, customFields: [],
-    outputRows: null, outputHeaders: null, outputRowMeta: [], selectedNoteRows: [], templateFiles: {}, cleanCount: 0,
+    outputRows: null, outputHeaders: null, outputRowMeta: [], selectedNoteRows: [], previewRowLimit: DEFAULT_PREVIEW_ROW_LIMIT, templateFiles: {}, cleanCount: 0,
     unmatchedRows: [], shangSheCandidates: [],
   });
   ['accum-indicator','step-mapping','step-template','step-export'].forEach(id =>

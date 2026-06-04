@@ -24,3 +24,8 @@ desktop.ini
 # 项目特定临时文件
 analyze*.js
 verify*.js
+
+#测试模版文件
+*.xlsx
+*.xls
+*.csv

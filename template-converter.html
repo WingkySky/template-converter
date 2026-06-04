@@ -292,6 +292,9 @@ const state = {
   outputRowMeta: [],
   selectedNoteRows: [],
   previewRowLimit: DEFAULT_PREVIEW_ROW_LIMIT,
+  batchNo: '',
+  batchShangSheId: '',
+  batchShangSheName: '',
   cleanCount: 0,
   // Template file data (ArrayBuffer) for preservation-based export
   templateFiles: {},
@@ -965,6 +968,177 @@ function lookupShangSheByName(name) {
     }
   }
   return null;
+}
+
+function detectSourceClientInfo(sourcesData) {
+  let detectedClientName = '';
+  for (const src of state.sources.filter(s => s.selected)) {
+    const allRows = src.rows;
+    for (let ri = 0; ri < allRows.length; ri++) {
+      const row = allRows[ri] || [];
+      for (let ci = 0; ci < row.length; ci++) {
+        const cellStr = String(row[ci] || '').trim();
+        const m1 = cellStr.match(/(?:客户名称|公司名称|委托方|甲方)[：:]\s*(.+)/);
+        if (m1 && m1[1]) {
+          detectedClientName = m1[1].trim();
+          break;
+        }
+        if (/^(?:客户名称|公司名称|委托方|甲方)[：:]?$/.test(cellStr)) {
+          const nextVal = row[ci + 1] ? String(row[ci + 1]).trim() : '';
+          if (nextVal) {
+            detectedClientName = nextVal;
+            break;
+          }
+        }
+      }
+      if (detectedClientName) break;
+    }
+    if (detectedClientName) break;
+  }
+
+  let mappedClientName = '';
+  sourcesData.forEach(({ dataRows, typeToCol }) => {
+    if (mappedClientName) return;
+    if (typeToCol.clientName != null) {
+      const firstVal = dataRows[0]?.[typeToCol.clientName];
+      if (firstVal) mappedClientName = String(firstVal).trim();
+    }
+  });
+
+  let detectedTaxId = '';
+  for (const src of state.sources.filter(s => s.selected)) {
+    const allRows = src.rows;
+    for (let ri = 0; ri < allRows.length; ri++) {
+      const row = allRows[ri] || [];
+      for (let ci = 0; ci < row.length; ci++) {
+        const cellStr = String(row[ci] || '').trim();
+        const m1 = cellStr.match(/(?:统一信用代码|纳税人识别号|统一社会信用代码|税号|信用代码)[：:]\s*(.+)/);
+        if (m1 && m1[1]) {
+          detectedTaxId = m1[1].trim();
+          break;
+        }
+        if (/^(?:统一信用代码|纳税人识别号|统一社会信用代码|税号|信用代码)[：:]?$/.test(cellStr)) {
+          const nextVal = row[ci + 1] ? String(row[ci + 1]).trim() : '';
+          if (nextVal) {
+            detectedTaxId = nextVal;
+            break;
+          }
+        }
+      }
+      if (detectedTaxId) break;
+    }
+    if (detectedTaxId) break;
+  }
+
+  let mappedTaxId = '';
+  sourcesData.forEach(({ dataRows, typeToCol }) => {
+    if (mappedTaxId) return;
+    if (typeToCol.taxId != null) {
+      const firstVal = dataRows[0]?.[typeToCol.taxId];
+      if (firstVal) mappedTaxId = String(firstVal).trim();
+    }
+  });
+
+  return {
+    clientName: detectedClientName || mappedClientName,
+    taxId: detectedTaxId || mappedTaxId
+  };
+}
+
+function getShangSheIdFromLookup(lookup) {
+  if (!lookup) return '';
+  const kb = loadKB();
+  for (const [id, entry] of Object.entries(kb.shangSheMap || {})) {
+    if (entry.fullName === lookup.fullName || entry.shortName === lookup.shortName || entry.taxId === lookup.taxId) return id;
+  }
+  return '';
+}
+
+function detectBestShangSheMatch(sourcesData) {
+  let mappedShangSheId = '';
+  sourcesData.forEach(({ dataRows, typeToCol }) => {
+    if (mappedShangSheId) return;
+    if (typeToCol.shangSheId != null) {
+      const firstVal = dataRows[0]?.[typeToCol.shangSheId];
+      if (firstVal) mappedShangSheId = String(firstVal).trim();
+    }
+  });
+  if (mappedShangSheId) {
+    const lookup = lookupShangShe(mappedShangSheId);
+    if (lookup) {
+      return { lookup, id: mappedShangSheId, candidates: [], clientName: '', taxId: '' };
+    }
+  }
+
+  const { clientName, taxId } = detectSourceClientInfo(sourcesData);
+  let bestLookup = taxId ? lookupShangSheByTaxId(taxId) : null;
+  let candidates = [];
+
+  if (!bestLookup && clientName) {
+    const clientNameLookups = lookupShangSheByNameAll(clientName);
+    if (clientNameLookups.length === 1) {
+      bestLookup = clientNameLookups[0].lookup;
+    } else if (clientNameLookups.length > 1) {
+      candidates = clientNameLookups.map(c => ({ id: c.id, label: `${c.id} - ${c.lookup.shortName || c.lookup.fullName}`, matchType: c.matchType }));
+    }
+  }
+
+  return {
+    lookup: bestLookup,
+    id: getShangSheIdFromLookup(bestLookup),
+    candidates,
+    clientName,
+    taxId
+  };
+}
+
+const PINYIN_INITIAL_SPECIALS = {
+  晟: 'S', 联: 'L', 数: 'S', 码: 'M', 博: 'B', 跃: 'Y', 重: 'C', 长: 'C', 厦: 'X', 曾: 'Z', 单: 'S'
+};
+
+const PINYIN_BOUNDARIES = [
+  ['A','阿'], ['B','八'], ['C','嚓'], ['D','咑'], ['E','妸'], ['F','发'], ['G','旮'],
+  ['H','哈'], ['J','讥'], ['K','咖'], ['L','垃'], ['M','妈'], ['N','拿'], ['O','哦'],
+  ['P','啪'], ['Q','七'], ['R','呥'], ['S','仨'], ['T','他'], ['W','哇'], ['X','夕'],
+  ['Y','丫'], ['Z','匝']
+];
+
+function chineseInitial(ch) {
+  if (!ch) return '';
+  if (/[A-Za-z]/.test(ch)) return ch.toUpperCase();
+  if (!/[\u4e00-\u9fff]/.test(ch)) return '';
+  if (PINYIN_INITIAL_SPECIALS[ch]) return PINYIN_INITIAL_SPECIALS[ch];
+  let initial = 'Z';
+  for (const [letter, boundary] of PINYIN_BOUNDARIES) {
+    if (ch.localeCompare(boundary, 'zh-Hans-CN-u-co-pinyin') >= 0) initial = letter;
+    else break;
+  }
+  return initial;
+}
+
+function shortNameForBatch(shortName) {
+  let s = String(shortName || '').trim();
+  if (!s) return '';
+  s = s.split(/[-－—]/).filter(Boolean).pop().trim();
+  return s.replace(/有限公司|有限责任公司|公司|集团/g, '') || s;
+}
+
+function initialsForBatchName(name) {
+  const raw = String(name || '').trim();
+  const initials = Array.from(raw).map(chineseInitial).join('');
+  return initials || 'UNKNOWN';
+}
+
+function buildBatchNoFromShangShe(lookup) {
+  if (!lookup) return '';
+  const baseName = shortNameForBatch(lookup.shortName || lookup.fullName);
+  return `${getTodayStr()}${initialsForBatchName(baseName)}-A`;
+}
+
+function applyBatchShangShe(lookup, id) {
+  state.batchShangSheId = id || getShangSheIdFromLookup(lookup);
+  state.batchShangSheName = lookup?.shortName || lookup?.fullName || '';
+  state.batchNo = buildBatchNoFromShangShe(lookup);
 }
 
 // 生成全局任务清单（带序号）
@@ -1767,7 +1941,10 @@ function cloneTemplateOutputState() {
     unmatchedRows: [...(state.unmatchedRows || [])],
     shangSheCandidates: [...(state.shangSheCandidates || [])],
     selectedNoteRows: [...(state.selectedNoteRows || [])],
-    previewRowLimit: state.previewRowLimit
+    previewRowLimit: state.previewRowLimit,
+    batchNo: state.batchNo || '',
+    batchShangSheId: state.batchShangSheId || '',
+    batchShangSheName: state.batchShangSheName || ''
   };
 }
 
@@ -1788,6 +1965,9 @@ function restoreTemplateOutput(templateKey) {
   state.shangSheCandidates = [...(cached.shangSheCandidates || [])];
   state.selectedNoteRows = [...(cached.selectedNoteRows || [])];
   state.previewRowLimit = cached.previewRowLimit || DEFAULT_PREVIEW_ROW_LIMIT;
+  state.batchNo = cached.batchNo || '';
+  state.batchShangSheId = cached.batchShangSheId || '';
+  state.batchShangSheName = cached.batchShangSheName || '';
   return true;
 }
 
@@ -1875,6 +2055,20 @@ function generateOutput() {
       });
     });
   });
+
+  const batchMatch = ['yidao', 'shenbianyun'].includes(state.targetTemplate)
+    ? detectBestShangSheMatch(sourcesData)
+    : null;
+  if (batchMatch) {
+    state.shangSheCandidates = batchMatch.candidates || [];
+    if (batchMatch.lookup) {
+      applyBatchShangShe(batchMatch.lookup, batchMatch.id);
+    } else {
+      state.batchShangSheId = '';
+      state.batchShangSheName = '';
+      state.batchNo = '';
+    }
+  }
 
   // 云杉模版：知识库自动填充
   const unmatchedRows = [];
@@ -2179,15 +2373,18 @@ function showExportStep() {
 
   // 云杉模版：获取平台和任务清单数据用于下拉框
   const isYouyi = state.targetTemplate === 'youyi';
+  const supportsBatchNo = ['yidao', 'shenbianyun'].includes(state.targetTemplate);
   let allPlatforms = [];
   let allTaxSources = [];
   let shangSheFullList = [];
   let shangSheCandidates = [];
-  if (isYouyi) {
+  if (isYouyi || supportsBatchNo) {
     const kb = loadKB();
     const config = getConfigLists(kb);
-    allPlatforms = config.platforms;
-    allTaxSources = uniqueTaxSources(config.taxSources);
+    if (isYouyi) {
+      allPlatforms = config.platforms;
+      allTaxSources = uniqueTaxSources(config.taxSources);
+    }
     shangSheCandidates = (state.shangSheCandidates || []).filter(Boolean);
     shangSheFullList = Object.entries(kb.shangSheMap || {}).map(([id, entry]) => {
       const shortName = entry.shortName || '';
@@ -2284,6 +2481,36 @@ function showExportStep() {
     kbMatchHTML = `<div class="status-msg success">✅ 知识库匹配：全部 ${rows.length} 行已成功匹配</div>`;
   }
 
+  let batchNoHTML = '';
+  if (supportsBatchNo) {
+    const candidateHint = shangSheCandidates.length > 0
+      ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">💡 已根据客户信息缩小范围，找到 ${shangSheCandidates.length} 个候选商社（也可搜索其他商社）</div>`
+      : '';
+    const batchStatus = state.batchShangSheName
+      ? `已匹配商社：${escapeHTML(state.batchShangSheName)}`
+      : '未自动匹配到商社，可手动搜索选择';
+    batchNoHTML = `
+    <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🏷️ 商社与批次号</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${batchStatus}</div>
+      ${candidateHint}
+      <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) auto;gap:10px;align-items:center;">
+        <div style="position:relative;">
+          <input type="text" id="shangshe-search" placeholder="输入编号、名称或税号搜索商社..."
+            style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;outline:none;"
+            oninput="filterShangSheList()" onfocus="showShangSheDropdown()" autocomplete="off"
+            value="${escapeHTML(state.batchShangSheName || '')}">
+          <input type="hidden" id="shangshe-selected-id" value="${escapeHTML(state.batchShangSheId || '')}">
+          <div id="shangshe-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:240px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,0.3);"></div>
+        </div>
+        <input id="batch-no-input" value="${escapeHTML(state.batchNo || '')}" placeholder="批次号"
+          style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;outline:none;"
+          oninput="onBatchNoChange(this)">
+        <button class="btn btn-primary btn-sm" onclick="applyBatchShangSheFromSelection()">应用商社</button>
+      </div>
+    </div>`;
+  }
+
   // 云杉模版：手动匹配商社选择器（仅在有未匹配行时显示）- 可搜索下拉框
   let manualShangSheHTML = '';
   if (isYouyi && unmatchedSet.size > 0) {
@@ -2374,6 +2601,7 @@ function showExportStep() {
     ${selectedExportTemplates.length > 1 ? `<div class="status-msg info">本次已选择：${selectedExportTemplates.map(k => TEMPLATES[k].name).join('、')}。当前表格预览为 ${tplName}。</div>` : ''}
     ${previewSwitchHTML}
     ${kbMatchHTML}
+    ${batchNoHTML}
     ${manualShangSheHTML}
     ${state.cleanCount > 0 ? `<div class="status-msg info">🧹 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
     ${batchControlsHTML}
@@ -2389,10 +2617,12 @@ function showExportStep() {
     </div>`;
 
   // 设置搜索下拉框所需的全局变量
-  if (isYouyi) {
+  if (isYouyi || supportsBatchNo) {
     // 设置商社列表数据
     window._shangSheFullList = shangSheFullList;
     window._shangSheCandidates = shangSheCandidates;
+  }
+  if (isYouyi) {
     // 设置平台列表数据
     window._platformFullList = allPlatforms.map(p => ({ value: p, label: p, searchText: normalizeSearchText(p) }));
   }
@@ -2492,6 +2722,35 @@ function applyPlatformToAll() {
   }
 
   // 刷新预览
+  showExportStep();
+}
+
+function onBatchNoChange(inputEl) {
+  state.batchNo = String(inputEl.value || '').trim();
+  cacheCurrentTemplateOutput();
+}
+
+function applyBatchShangSheFromSelection() {
+  const hidden = document.getElementById('shangshe-selected-id');
+  const batchInput = document.getElementById('batch-no-input');
+  const selectedId = hidden ? hidden.value : '';
+  if (!selectedId) {
+    alert('请先选择一个商社');
+    return;
+  }
+  const lookup = lookupShangShe(selectedId);
+  if (!lookup) {
+    alert('未找到该商社的信息');
+    return;
+  }
+  // 读取用户可能手动编辑过的批次号
+  const editedBatchNo = batchInput ? String(batchInput.value || '').trim() : '';
+  applyBatchShangShe(lookup, selectedId);
+  // 如果用户手动编辑过批次号，以用户编辑的为准
+  if (editedBatchNo && editedBatchNo !== state.batchNo) {
+    state.batchNo = editedBatchNo;
+  }
+  cacheCurrentTemplateOutput();
   showExportStep();
 }
 
@@ -2770,9 +3029,18 @@ function selectShangShe(id, label) {
   const input = document.getElementById('shangshe-search');
   const hidden = document.getElementById('shangshe-selected-id');
   const dropdown = document.getElementById('shangshe-dropdown');
+  const batchInput = document.getElementById('batch-no-input');
   if (input) input.value = label;
   if (hidden) hidden.value = id;
   if (dropdown) dropdown.style.display = 'none';
+  // 选择商社后立即预览批次号
+  if (id && batchInput) {
+    const lookup = lookupShangShe(id);
+    if (lookup) {
+      const previewBatchNo = buildBatchNoFromShangShe(lookup);
+      batchInput.value = previewBatchNo;
+    }
+  }
 }
 
 // 平台搜索下拉框
@@ -2848,7 +3116,16 @@ function getExportFileName(ext) {
 
 function getExportFileNameForTemplate(templateKey, ext) {
   const tplName = templateKey === 'custom' ? '自定义' : TEMPLATES[templateKey].name;
+  const batchNo = getBatchNoForTemplate(templateKey);
+  if (['yidao', 'shenbianyun'].includes(templateKey) && batchNo) {
+    return `${batchNo}_${tplName}.${ext}`;
+  }
   return `${tplName}_转换结果_${getTodayStr()}.${ext}`;
+}
+
+function getBatchNoForTemplate(templateKey) {
+  if (templateKey === state.targetTemplate) return state.batchNo || '';
+  return state.templateOutputs?.[templateKey]?.batchNo || '';
 }
 
 /**
@@ -3028,7 +3305,7 @@ async function exportExcel() {
 
 function buildWorkbookForTemplate(templateKey, headers, rows) {
   if (templateKey === 'yidao') return buildYidaoWorkbook(headers, rows);
-  if (templateKey === 'shenbianyun') return buildShenbianyunWorkbook(headers, rows);
+  if (templateKey === 'shenbianyun') return buildShenbianyunWorkbook(headers, rows, getBatchNoForTemplate(templateKey));
   if (templateKey === 'youyi') return buildYouyiWorkbook(headers, rows);
   return buildGenericWorkbook(headers, rows);
 }
@@ -3090,11 +3367,12 @@ function buildYidaoWorkbook(headers, rows) {
 }
 
 // 身边云: Row1=instructions(merged), Row2=batch info, Row3=empty, Row4=header, Row5+=data
-function buildShenbianyunWorkbook(headers, rows) {
+function buildShenbianyunWorkbook(headers, rows, batchNo = '') {
+  const totalAmount = rows.reduce((sum, row) => sum + (parseFloat(String(row[4] || '').replace(/,/g, '')) || 0), 0);
   const wsData = [
     ['单批次最大支持1000条订单。\n商户订单号纯数字并且唯一，禁止重复。\n付款金额保留两位小数，四舍五入。\n备注字段最大限制20字，银行备注展示限制具体以银行为准。\n付款文件名称或备注存在以下字段会导致文件上传失败：工资、薪酬、提现、薪、补贴、分红、奖金、返现、劳务费、分润、备用金、¥、$\n银行卡号建议使用一类户，如使用二类户日限额导致交易退汇，需T+8个工作日退回','','','','','',''],
     ['商户批次号（非必填）','总笔数（非必填）','总金额（元，非必填）','','','',''],
-    ['','','','','','',''],
+    [batchNo || '', rows.length || '', totalAmount ? String(Math.round(totalAmount * 100) / 100) : '','','','',''],
     headers,
     ...rows
   ];

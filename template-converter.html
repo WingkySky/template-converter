@@ -97,6 +97,65 @@
     max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .result-table tr:hover td { background: rgba(108,92,231,0.04); }
+  /* 列筛选样式 */
+  .result-table th { position: relative; }
+  .col-filter-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 20px; height: 20px; margin-left: 4px; border: none; background: none;
+    color: var(--text2); cursor: pointer; border-radius: 3px; font-size: 12px;
+    vertical-align: middle; opacity: 0.5; transition: all 0.15s;
+  }
+  .col-filter-btn:hover { opacity: 1; background: rgba(108,92,231,0.1); }
+  .col-filter-btn.active { opacity: 1; color: var(--accent); background: rgba(108,92,231,0.15); }
+  .col-filter-panel {
+    position: absolute; top: 100%; left: 0; z-index: 300;
+    min-width: 200px; max-width: 300px; max-height: 320px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.3); padding: 10px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .col-filter-panel .filter-search {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 4px; padding: 5px 8px; color: var(--text); font-size: 12px; outline: none;
+  }
+  .col-filter-panel .filter-list {
+    max-height: 180px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px;
+  }
+  .col-filter-panel .filter-item {
+    display: flex; align-items: center; gap: 6px; padding: 3px 4px;
+    font-size: 12px; color: var(--text); cursor: pointer; border-radius: 3px;
+  }
+  .col-filter-panel .filter-item:hover { background: rgba(108,92,231,0.06); }
+  .col-filter-panel .filter-item input { width: 14px; height: 14px; accent-color: var(--accent); }
+  .col-filter-panel .filter-item .filter-value {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+  }
+  .col-filter-panel .filter-actions {
+    display: flex; gap: 6px; justify-content: flex-end;
+  }
+  .col-filter-panel .filter-actions button {
+    font-size: 11px; padding: 3px 10px; border-radius: 4px; border: 1px solid var(--border);
+    background: var(--surface2); color: var(--text); cursor: pointer;
+  }
+  .col-filter-panel .filter-actions button:hover { background: var(--accent); color: #fff; }
+  .filter-summary {
+    font-size: 12px; color: var(--accent); margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  }
+  .filter-summary .filter-tag {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: rgba(108,92,231,0.1); color: var(--accent); padding: 2px 8px;
+    border-radius: 10px; font-size: 11px;
+  }
+  .filter-summary .filter-tag button {
+    background: none; border: none; color: var(--accent); cursor: pointer;
+    font-size: 13px; line-height: 1; padding: 0;
+  }
+  .filter-summary .clear-all-btn {
+    background: none; border: 1px solid var(--border); color: var(--text2);
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+  }
+  .filter-summary .clear-all-btn:hover { border-color: var(--accent); color: var(--accent); }
   .template-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 12px; margin-bottom: 16px;
@@ -310,6 +369,8 @@ const state = {
   lastSaveDir: null,
   // 列索引常量，由 showExportStep() 动态计算
   colIndex: {},
+  // 列筛选状态：{ colIdx: Set(允许的值) }
+  columnFilters: {},
 };
 
 function updateOutputRow(rowIdx, colIdx, value) {
@@ -2202,6 +2263,7 @@ function restoreTemplateOutput(templateKey) {
 
 function switchPreviewTemplate(templateKey) {
   if (!templateKey || templateKey === state.targetTemplate) return;
+  state.columnFilters = {};
   cacheCurrentTemplateOutput();
   state.targetTemplate = templateKey;
   if (restoreTemplateOutput(templateKey)) {
@@ -2213,6 +2275,7 @@ function switchPreviewTemplate(templateKey) {
 
 // ==================== Generate Output ====================
 function generateOutput() {
+  state.columnFilters = {};
   const { sourcesData } = state.mappingState;
 
   if (state.targetTemplate === 'custom') {
@@ -2490,6 +2553,198 @@ function normalizeSearchText(value) {
   return String(value ?? '').trim().toLowerCase();
 }
 
+// ==================== Column Filter ====================
+function getColumnUniqueValues(colIdx) {
+  const values = new Set();
+  for (const row of state.outputRows || []) {
+    const v = row[colIdx];
+    values.add(v != null ? String(v) : '');
+  }
+  return Array.from(values).sort();
+}
+
+let _activeFilterCol = -1;
+
+function toggleColumnFilter(event, colIdx) {
+  event.stopPropagation();
+  closeAllFilterPanels();
+  if (_activeFilterCol === colIdx) {
+    _activeFilterCol = -1;
+    return;
+  }
+  _activeFilterCol = colIdx;
+  const th = event.target.closest('th');
+  if (!th) return;
+  const panel = document.createElement('div');
+  panel.className = 'col-filter-panel';
+  panel.id = 'col-filter-panel';
+  const uniqueValues = getColumnUniqueValues(colIdx);
+  const currentFilter = state.columnFilters[colIdx];
+  const allChecked = !currentFilter || currentFilter.size === uniqueValues.length;
+
+  panel.innerHTML = `
+    <input class="filter-search" placeholder="搜索..." oninput="filterFilterList(this.value, ${colIdx})">
+    <div style="display:flex;align-items:center;gap:6px;padding:2px 4px;">
+      <input type="checkbox" id="filter-select-all" ${allChecked ? 'checked' : ''} onchange="toggleFilterSelectAll(${colIdx}, this.checked)">
+      <label for="filter-select-all" style="font-size:12px;color:var(--text2);cursor:pointer;">全选/取消全选</label>
+    </div>
+    <div class="filter-list" id="filter-value-list">
+      ${uniqueValues.map(v => {
+        const checked = !currentFilter || currentFilter.has(v);
+        const escapedV = escapeHTML(v).replace(/'/g, "\\'");
+        return `<div class="filter-item" data-value="${escapeHTML(v)}">
+          <input type="checkbox" ${checked ? 'checked' : ''} onchange="toggleFilterValue(${colIdx}, '${escapedV}', this.checked)">
+          <span class="filter-value" title="${escapeHTML(v)}">${v ? escapeHTML(v) : '<span style="color:var(--text2);opacity:0.5;">(空)</span>'}</span>
+        </div>`;
+      }).join('')}
+    </div>
+    <div class="filter-actions">
+      <button onclick="resetColumnFilter(${colIdx})">重置</button>
+      <button onclick="applyColumnFilter(${colIdx})">确定</button>
+    </div>`;
+  th.style.position = 'relative';
+  th.appendChild(panel);
+  setTimeout(() => document.addEventListener('click', closeFilterOnOutsideClick), 0);
+}
+
+function closeAllFilterPanels() {
+  const panel = document.getElementById('col-filter-panel');
+  if (panel) panel.remove();
+  document.removeEventListener('click', closeFilterOnOutsideClick);
+}
+
+function closeFilterOnOutsideClick(e) {
+  const panel = document.getElementById('col-filter-panel');
+  if (panel && !panel.contains(e.target) && !e.target.classList.contains('col-filter-btn')) {
+    closeAllFilterPanels();
+    _activeFilterCol = -1;
+  }
+}
+
+function filterFilterList(searchText, colIdx) {
+  const list = document.getElementById('filter-value-list');
+  if (!list) return;
+  const items = list.querySelectorAll('.filter-item');
+  const lower = searchText.toLowerCase();
+  items.forEach(item => {
+    const value = item.dataset.value || '';
+    item.style.display = !searchText || value.toLowerCase().includes(lower) ? '' : 'none';
+  });
+}
+
+function toggleFilterSelectAll(colIdx, checked) {
+  const list = document.getElementById('filter-value-list');
+  if (!list) return;
+  list.querySelectorAll('.filter-item input[type="checkbox"]').forEach(cb => { cb.checked = checked; });
+}
+
+function toggleFilterValue(colIdx, value, checked) {
+  // 即时更新复选框状态，但不立即应用筛选
+}
+
+function applyColumnFilter(colIdx) {
+  const list = document.getElementById('filter-value-list');
+  if (!list) return;
+  const checkboxes = list.querySelectorAll('.filter-item input[type="checkbox"]');
+  const uncheckedValues = new Set();
+  checkboxes.forEach(cb => {
+    if (!cb.checked) {
+      const value = cb.closest('.filter-item').dataset.value;
+      uncheckedValues.add(value);
+    }
+  });
+
+  if (uncheckedValues.size === 0) {
+    delete state.columnFilters[colIdx];
+  } else {
+    const uniqueValues = getColumnUniqueValues(colIdx);
+    state.columnFilters[colIdx] = new Set(uniqueValues.filter(v => !uncheckedValues.has(v)));
+  }
+
+  closeAllFilterPanels();
+  _activeFilterCol = -1;
+  applyColumnFilters();
+  updateFilterSummary();
+}
+
+function resetColumnFilter(colIdx) {
+  delete state.columnFilters[colIdx];
+  closeAllFilterPanels();
+  _activeFilterCol = -1;
+  applyColumnFilters();
+  updateFilterSummary();
+}
+
+function clearAllColumnFilters() {
+  state.columnFilters = {};
+  applyColumnFilters();
+  updateFilterSummary();
+  document.querySelectorAll('.col-filter-btn.active').forEach(btn => btn.classList.remove('active'));
+}
+
+function applyColumnFilters() {
+  const tbody = document.querySelector('#export-content .result-table tbody');
+  if (!tbody) return;
+  const rows = tbody.querySelectorAll('tr[data-row-idx]');
+  const filters = state.columnFilters;
+  const hasAnyFilter = Object.keys(filters).length > 0;
+
+  rows.forEach(tr => {
+    const ri = parseInt(tr.dataset.rowIdx);
+    if (isNaN(ri)) return;
+    const row = state.outputRows?.[ri];
+    if (!row) return;
+
+    let visible = true;
+    if (hasAnyFilter) {
+      for (const [colIdxStr, allowedSet] of Object.entries(filters)) {
+        const ci = parseInt(colIdxStr);
+        const cellValue = row[ci] != null ? String(row[ci]) : '';
+        if (!allowedSet.has(cellValue)) {
+          visible = false;
+          break;
+        }
+      }
+    }
+    tr.style.display = visible ? '' : 'none';
+  });
+
+  // 更新表头筛选按钮的 active 状态
+  document.querySelectorAll('.col-filter-btn').forEach(btn => {
+    const onclickStr = btn.getAttribute('onclick') || '';
+    const match = onclickStr.match(/toggleColumnFilter\(event,\s*(\d+)\)/);
+    if (match) {
+      const colIdx = parseInt(match[1]);
+      const hasFilter = filters[colIdx] && filters[colIdx].size < getColumnUniqueValues(colIdx).length;
+      btn.classList.toggle('active', !!hasFilter);
+    }
+  });
+}
+
+function updateFilterSummary() {
+  const filters = state.columnFilters;
+  const headers = state.outputHeaders || [];
+  const summaryEl = document.getElementById('filter-summary');
+  if (!summaryEl) return;
+
+  const entries = Object.entries(filters);
+  if (entries.length === 0) {
+    summaryEl.innerHTML = '';
+    return;
+  }
+
+  let html = '<span style="color:var(--text2);">🔍 筛选:</span>';
+  for (const [colIdxStr, allowedSet] of entries) {
+    const ci = parseInt(colIdxStr);
+    const colName = headers[ci] || `列${ci+1}`;
+    const total = getColumnUniqueValues(ci).length;
+    const selected = allowedSet.size;
+    html += `<span class="filter-tag">${escapeHTML(colName)}: ${selected}/${total}<button onclick="resetColumnFilter(${ci})">✕</button></span>`;
+  }
+  html += `<button class="clear-all-btn" onclick="clearAllColumnFilters()">清除全部</button>`;
+  summaryEl.innerHTML = html;
+}
+
 // ==================== Export Step ====================
 function showExportStep() {
   // 保存当前滚动位置和焦点信息
@@ -2575,7 +2830,10 @@ function showExportStep() {
 
   const previewLimit = Math.max(DEFAULT_PREVIEW_ROW_LIMIT, Number(state.previewRowLimit) || DEFAULT_PREVIEW_ROW_LIMIT);
   const pv = Math.min(rows.length, previewLimit);
-  let headHTML = headers.map(h=>`<th>${escapeHTML(h)}</th>`).join('');
+  let headHTML = headers.map((h, ci) => {
+    const hasFilter = state.columnFilters[ci] && state.columnFilters[ci].size < getColumnUniqueValues(ci).length;
+    return `<th><span>${escapeHTML(h)}</span><button class="col-filter-btn${hasFilter ? ' active' : ''}" title="筛选" onclick="toggleColumnFilter(event, ${ci})">🔽</button></th>`;
+  }).join('');
   if (hasNoteColumn) {
     const allVisibleSelected = visiblePreviewRowCount() > 0 && Array.from({ length: visiblePreviewRowCount() }, (_, i) => i).every(i => selectedNoteSet.has(i));
     headHTML = `<th style="width:44px;text-align:center;"><input type="checkbox" id="select-all-visible-checkbox" title="选择当前预览行" ${allVisibleSelected ? 'checked' : ''} onchange="toggleVisibleNoteRows(this.checked)"></th>` + headHTML;
@@ -2765,6 +3023,7 @@ function showExportStep() {
     ${state.cleanCount > 0 ? `<div class="status-msg info">🧹 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
     ${batchControlsHTML}
     ${noteControlsHTML}
+    <div id="filter-summary" class="filter-summary"></div>
     <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;margin-bottom:16px;">
       <table class="result-table"><thead><tr>${headHTML}</tr></thead><tbody>${bodyHTML}</tbody></table>
     </div>
@@ -2801,6 +3060,9 @@ function showExportStep() {
       }
     }
   }
+  // 应用列筛选
+  applyColumnFilters();
+  updateFilterSummary();
 }
 
 // 获取某个商社编号对应的所有任务（从taskListData或KB tasks）

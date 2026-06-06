@@ -29,3 +29,11 @@ verify*.js
 *.xlsx
 *.xls
 *.csv
+
+#配置位置
+.trae/
+
+#开发文档
+*.docx
+*.doc
+*.pdf

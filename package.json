@@ -1,5 +1,6 @@
 {
-  "dependencies": {
-    "xlsx": "^0.18.5"
-  }
+  "name": "template-converter",
+  "version": "1.0.0",
+  "description": "灵工发放模版转换工具",
+  "private": true
 }

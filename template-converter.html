@@ -3099,7 +3099,8 @@ function getRemarkPresetValue(rowIdx, preset) {
   const row = state.outputRows?.[rowIdx] || [];
   if (preset === 'filename') {
     const meta = state.outputRowMeta?.[rowIdx] || {};
-    return meta.fileName || state.sources.filter(s => s.selected).map(s => s.fileName).filter(Boolean).join('、');
+    const rawName = meta.fileName || state.sources.filter(s => s.selected).map(s => s.fileName).filter(Boolean).join('、');
+    return rawName.replace(/\.[^.]+$/, '');
   }
   if (preset === 'date') {
     const d = new Date();

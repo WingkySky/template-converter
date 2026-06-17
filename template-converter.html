@@ -3860,13 +3860,22 @@ function buildYidaoWorkbook(headers, rows) {
 
 // 身边云: Row1=instructions(merged), Row2=batch info, Row3=empty, Row4=header, Row5+=data
 function buildShenbianyunWorkbook(headers, rows, batchNo = '') {
-  const totalAmount = rows.reduce((sum, row) => sum + (parseFloat(String(row[4] || '').replace(/,/g, '')) || 0), 0);
+  const amountIdx = headers.indexOf('付款金额（元，必填）');
+  const totalAmount = rows.reduce((sum, row) => sum + (parseFloat(String(row[amountIdx] || '').replace(/,/g, '')) || 0), 0);
+  // 将付款金额列转换为数值类型，避免 Excel 识别为文本
+  const numericRows = rows.map(row => {
+    if (amountIdx < 0) return row;
+    const out = [...row];
+    const n = parseFloat(String(out[amountIdx] || '').replace(/,/g, ''));
+    out[amountIdx] = isNaN(n) ? '' : Math.round(n * 100) / 100;
+    return out;
+  });
   const wsData = [
     ['单批次最大支持1000条订单。\n商户订单号纯数字并且唯一，禁止重复。\n付款金额保留两位小数，四舍五入。\n备注字段最大限制20字，银行备注展示限制具体以银行为准。\n付款文件名称或备注存在以下字段会导致文件上传失败：工资、薪酬、提现、薪、补贴、分红、奖金、返现、劳务费、分润、备用金、¥、$\n银行卡号建议使用一类户，如使用二类户日限额导致交易退汇，需T+8个工作日退回','','','','','',''],
     ['商户批次号（非必填）','总笔数（非必填）','总金额（元，非必填）','','','',''],
-    [batchNo || '', rows.length || '', totalAmount ? String(Math.round(totalAmount * 100) / 100) : '','','','',''],
+    [batchNo || '', rows.length || '', totalAmount ? Math.round(totalAmount * 100) / 100 : '','','','',''],
     headers,
-    ...rows
+    ...numericRows
   ];
   const ws = XLSX.utils.aoa_to_sheet(wsData);
   // Merge row 1 across all columns

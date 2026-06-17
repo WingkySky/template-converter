@@ -1848,6 +1848,39 @@ function analyzeSheet(sheetName, rows, monthHint, yearHint) {
 // ==================== Smart Table Detection (IMPROVED) ====================
 const SUMMARY_RE = /合计|总计|汇总|小计|平台服务费|服务费率|平台费率|合计支付|开票金额|收费通知/i;
 
+// 检测下一行是否是表头延续（双行表头的第二行）
+function isHeaderContinuation(headerRow, nextRow) {
+  if (!nextRow || !Array.isArray(nextRow)) return false;
+  const nextNonEmpty = nextRow.filter(c => c != null && String(c).trim() !== '');
+  if (nextNonEmpty.length === 0) return false;
+  // 双行表头的第二行通常只有少数拆分的列，不超过表头列数的一半
+  if (nextNonEmpty.length > Math.max(3, headerRow.length * 0.5)) return false;
+  // 所有非空单元格必须是短文本，不能是数字、身份证号、手机号、银行卡号等数据值
+  for (const c of nextNonEmpty) {
+    const s = String(c).trim();
+    if (!s) continue;
+    if (/^\d+(\.\d+)?$/.test(s)) return false;       // 纯数字
+    if (/^\d{17}[\dXx]$/.test(s)) return false;       // 身份证号
+    if (/^1[3-9]\d{9}$/.test(s)) return false;        // 手机号
+    if (/^\d{16,19}$/.test(s)) return false;          // 银行卡号
+    if (s.length > 10) return false;                  // 表头文本通常较短
+  }
+  return true;
+}
+
+// 合并双行表头：对于每一列，若两行都有值则拼接，否则取非空值
+function mergeHeaderRows(row1, row2) {
+  const len = Math.max(row1.length, row2.length);
+  const merged = [];
+  for (let i = 0; i < len; i++) {
+    const h1 = String(row1[i] || '').trim();
+    const h2 = String(row2[i] || '').trim();
+    if (h1 && h2) merged.push(h1 + h2);
+    else merged.push(h1 || h2);
+  }
+  return merged;
+}
+
 function smartDetectTable(rows) {
   const HEADER_RE = /月份|month|收入|income|金额|amount|姓名|name|身份证|电话|phone|手机|银行|bank|卡号|性别|gender|开户|账号|备注|note|出错|平台|商社|任务|税源|工种|付款|收款|商户|订单|发放|应发|实发|户名/i;
   let bestIdx = 0, bestScore = 0;
@@ -1865,9 +1898,17 @@ function smartDetectTable(rows) {
     if (score > bestScore) { bestScore = score; bestIdx = i; }
   }
 
-  const headerRow = rows[bestIdx] || [];
+  let headerRow = rows[bestIdx] || [];
+  let dataStartIdx = bestIdx + 1;
+  // 检测双行表头：若下一行是表头延续，则合并两行作为完整表头
+  const nextRow = rows[bestIdx + 1];
+  if (isHeaderContinuation(headerRow, nextRow)) {
+    headerRow = mergeHeaderRows(headerRow, nextRow);
+    dataStartIdx = bestIdx + 2;
+  }
+
   const dataRows = [];
-  for (let i = bestIdx + 1; i < rows.length; i++) {
+  for (let i = dataStartIdx; i < rows.length; i++) {
     const row = rows[i] || [];
     // Skip empty rows
     if (!row.some(c => c != null && String(c).trim() !== '')) continue;

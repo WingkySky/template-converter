@@ -1807,7 +1807,7 @@ function analyzeSheet(sheetName, rows, monthHint, yearHint) {
   const nonEmpty = (rows || []).filter(row => row.some(cell => String(cell || '').trim() !== ''));
   if (!nonEmpty.length) return { sheetName, rows: [], score: -999, dataRowsCount: 0, headerRowIndex: 0, autoMap: { cols: {} } };
 
-  const { headerRow, headerRowIndex, dataRows } = smartDetectTable(nonEmpty);
+  const { headerRow, headerRowIndex, dataRows, filteredCount } = smartDetectTable(nonEmpty);
   const autoMap = detectColumnMapping(headerRow, dataRows);
 
   let headerScore = 0;
@@ -1841,7 +1841,7 @@ function analyzeSheet(sheetName, rows, monthHint, yearHint) {
 
   return {
     sheetName, rows: nonEmpty, score: headerScore + dataScore + nameScore,
-    dataRowsCount: dataRows.length, headerRowIndex, autoMap
+    dataRowsCount: dataRows.length, headerRowIndex, autoMap, filteredCount: filteredCount || 0
   };
 }
 
@@ -1908,56 +1908,122 @@ function smartDetectTable(rows) {
   }
 
   const dataRows = [];
+  let filteredNonPerson = 0;   // 被判定为非人员/单位记录而过滤掉的行数（如平台服务费、合计等）
   for (let i = dataStartIdx; i < rows.length; i++) {
     const row = rows[i] || [];
     // Skip empty rows
-    if (!row.some(c => c != null && String(c).trim() !== '')) continue;
+    const nonEmptyCells = row.filter(c => c != null && String(c).trim() !== '');
+    if (nonEmptyCells.length === 0) continue;
     // Skip summary rows (check ALL cells)
     if (isSummaryLikeRow(row)) continue;
-    // Skip rows with too many header-like keywords (secondary headers)
-    const kw = row.filter(cell => HEADER_RE.test(String(cell || ''))).length;
-    if (kw >= 3) continue;
-    // REQUIRE: row must contain at least one identity field (name, ID, phone, bank card)
-    // This replaces the strict "first cell must be sequence number" check,
-    // allowing data in any column layout (e.g. seq# in col B, text in col A)
-    if (!hasIdentityField(row)) continue;
+    // Skip rows that look like secondary headers: most cells are short header-like keywords
+    // A true secondary header has >50% of non-empty cells matching header keywords AND each is short (<=8 chars)
+    const kwCells = row.filter(cell => {
+      const s = String(cell || '').trim();
+      return s && HEADER_RE.test(s) && s.length <= 8;
+    });
+    // Only skip if keyword cells dominate the non-empty cells (>60%) AND there are at least 3
+    if (kwCells.length >= 3 && kwCells.length >= nonEmptyCells.length * 0.6) continue;
+    // 多重校验：只保留真正是人员/单位发放数据的记录
+    if (!hasIdentityField(row)) { filteredNonPerson++; continue; }
     dataRows.push(row);
   }
-  return { headerRow, headerRowIndex: bestIdx, dataRows };
+  return { headerRow, headerRowIndex: bestIdx, dataRows, filteredCount: filteredNonPerson };
 }
 
 function isSummaryLikeRow(row) {
   if (!Array.isArray(row)) return false;
-  // Check ALL cells for summary keywords
-  return row.some(cell => SUMMARY_RE.test(String(cell || '')));
+  // True summary rows usually have the summary keyword in the FIRST non-empty cell
+  // (like starting with "合计", "总计", "小计" in the first/label column)
+  // AND typically have a large number in the amount column.
+  // We don't want to skip rows just because a note/remark cell happens to contain "合计".
+
+  // Find first non-empty cell
+  let firstNonEmpty = '';
+  for (const cell of row) {
+    const s = String(cell || '').trim();
+    if (s) {
+      firstNonEmpty = s;
+      break;
+    }
+  }
+  if (!firstNonEmpty) return false;
+
+  // If the row starts with a strong summary keyword, it IS a summary row
+  const STRONG_SUMMARY_RE = /^(合计|总计|汇总|小计|累计)/;
+  if (STRONG_SUMMARY_RE.test(firstNonEmpty)) return true;
+
+  // Also check if the first cell IS exactly "合计" etc (exact match)
+  if (/^(合计|总计|汇总|小计|累计)$/.test(firstNonEmpty)) return true;
+
+  return false;
 }
 
 /**
  * Check if a row contains at least one identity field.
- * Supports: Chinese name (2-4 chars, excluding summary terms), ID card (18 digits),
- * phone (11 digits starting with 1), bank card (16-19 digits), or sequence number.
+ * Supports: Chinese name (2-15 chars, with possible · separator), ID card (18 digits),
+ * phone (11 digits starting with 1), bank card (16-19 digits), sequence number,
+ * or valid amount (strong signal this is a data row).
  */
-const SUMMARY_TERMS = /累计|总计|合计|小计|收入|金额|税率|费率|支付|平台|到手|服务|保险|备注|说明|税源|工种|任务|性别|开户|发放|实发|应发|个税/;
+const SUMMARY_TERMS_EXACT = new Set([
+  '累计', '总计', '合计', '小计', '收入', '金额', '税率', '费率', '支付', '平台',
+  '到手', '服务', '保险', '备注', '说明', '税源', '工种', '任务', '性别', '开户',
+  '发放', '实发', '应发', '个税', '序号', '编号', '姓名', '身份证', '电话', '手机',
+  '银行', '卡号', '账号', '户名', '备注', '说明'
+]);
+
+// 费用/汇总类标签：这些文本明显不是人员姓名，出现时应判定为非人员记录
+// （例如"平台服务费""额外服务费""服务费""手续费""小计""合计"等）
+const FEE_LABEL_RE = /费|平台|服务|合计|小计|总计|汇总|累计|税率|税点|费率|金额|账号|银行|开户|手机|电话|性别|备注|说明|序号|编号|开票|支付|社保|公积金|保险|个税|报酬|收入|商户|订单/;
+
+/**
+ * 判断一行是否为"真正的人员/单位发放记录"。
+ * 多重校验，避免把"平台服务费""额外服务费""合计""小计"等费用/汇总行误当作人员导出。
+ *
+ * 强身份标识（满足任一即视为有效发放对象）：
+ *   - 身份证号（18位，末位可为 X）
+ *   - 统一社会信用代码（18位字母+数字，个体户/单位收款人）
+ *   - 手机号（11位，1开头）
+ *   - 银行卡号（16-19位数字）
+ *
+ * 兜底规则：同时含"拟似姓名"（2-15个中文字符且不是费用/汇总标签）+ 金额 + 足够数据列。
+ *
+ * 只要该行包含费用/汇总标签（如"平台服务费"），且没有任何强身份标识，则判定为非人员记录。
+ */
 function hasIdentityField(row) {
-  let identityCount = 0;
+  let strongCount = 0;   // 强身份标识数量
+  let nameLike = false;  // 拟似姓名
+  let hasAmount = false;
+  let nonEmptyCount = 0;
+
   for (const cell of row) {
     const s = String(cell || '').trim();
     if (!s) continue;
-    // Chinese name: 2-4 Chinese characters, exclude summary-like terms
-    if (s.length >= 2 && s.length <= 4 && /^[\u4e00-\u9fff]+$/.test(s) && !SUMMARY_TERMS.test(s)) {
-      identityCount += 2; // Strong signal
+    nonEmptyCount++;
+
+    // —— 强身份标识：明确对应某个具体发放对象 ——
+    if (/^\d{17}[\dXx]$/.test(s)) { strongCount++; continue; }        // 身份证
+    if (/^[0-9A-Za-z]{18}$/.test(s)) { strongCount++; continue; }     // 统一社会信用代码
+    if (/^1[3-9]\d{9}$/.test(s)) { strongCount++; continue; }         // 手机号
+    if (/^\d{16,19}$/.test(s)) { strongCount++; continue; }           // 银行卡号
+
+    // —— 费用/汇总标签：明确不是人员姓名，跳过（不计入姓名）——
+    if (FEE_LABEL_RE.test(s)) continue;
+
+    // —— 拟似姓名：2-15 个中文字符（支持少数民族 ·）——
+    if (/^[\u4e00-\u9fff·]{2,15}$/.test(s)) {
+      nameLike = true;
+      continue;
     }
-    // ID card: 18 digits (last may be X)
-    else if (/^\d{17}[\dXx]$/.test(s)) { identityCount += 2; }
-    // Phone: 11 digits starting with 1
-    else if (/^1[3-9]\d{9}$/.test(s)) { identityCount += 2; }
-    // Bank card: 16-19 pure digits
-    else if (/^\d{16,19}$/.test(s)) { identityCount += 2; }
-    // Sequence number: 1-4 digit number (weak signal, needs supplement)
-    else if (/^\d{1,4}$/.test(s) && parseInt(s) > 0 && parseInt(s) < 10000) { identityCount += 1; }
+
+    // —— 金额：作为兜底判定依据 ——
+    if (isAmountLikeNumber(s)) hasAmount = true;
   }
-  // Require at least 2 (one strong identity field, or two sequence numbers)
-  return identityCount >= 2;
+
+  // 多重校验结论
+  if (strongCount >= 1) return true;                            // 含强身份标识 → 人员/单位记录
+  if (nameLike && hasAmount && nonEmptyCount >= 3) return true; // 姓名 + 金额 + 足够列 → 兜底
+  return false;
 }
 
 /**
@@ -2061,9 +2127,9 @@ function showMappingStep() {
   const source = sel.find(s => s.id === state.previewSourceId) || sel[0];
   state.previewSourceId = source.id;
 
-  const { headerRow, headerRowIndex, dataRows } = smartDetectTable(source.rows);
+  const { headerRow, headerRowIndex, dataRows, filteredCount } = smartDetectTable(source.rows);
   const autoMap = detectColumnMapping(headerRow, dataRows);
-  state.mappingState = { headerRow, headerRowIndex, dataRows, mapping: autoMap, source };
+  state.mappingState = { headerRow, headerRowIndex, dataRows, mapping: autoMap, source, filteredCount: filteredCount || 0 };
 
   // Source selection
   let sourceHTML = '';
@@ -2121,6 +2187,7 @@ function showMappingStep() {
       <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">📊 <strong style="color:var(--accent2);">${dataRows.length}</strong> 行有效数据</div>
       <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">📋 识别 <strong style="color:var(--accent2);">${colIndices.length}</strong> 列</div>
       ${headerRowIndex>0?`<div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">⏭️ 跳过前 ${headerRowIndex} 行</div>`:''}
+      ${filteredCount>0?`<div style="background:rgba(253,203,110,0.12);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">🛡️ 已自动过滤 <strong>${filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
     </div>
     <div style="font-size:14px;font-weight:600;margin-bottom:10px;">📋 列映射 — 请确认或修改</div>
     <div class="mapping-grid">${colsHTML}</div>

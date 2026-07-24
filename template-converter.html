@@ -2499,16 +2499,13 @@ function generateOutput() {
       clientNameLookups = lookupShangSheByNameAll(clientName);
     }
 
-    // 确定最佳匹配
-    let bestLookup = null;
+    // 构建候选列表：自动检测到的命中均转为候选，不直接锁定行，
+    // 以便云杉公司内部同一公司存在多个编号时可手动切换。
     let candidates = [];
-
     if (taxIdLookup) {
-      bestLookup = taxIdLookup;
-    } else if (clientNameLookups.length === 1) {
-      bestLookup = clientNameLookups[0].lookup;
-    } else if (clientNameLookups.length > 1) {
-      // 多个匹配 - 存储为候选供手动选择
+      const id = getShangSheIdFromLookup(taxIdLookup);
+      candidates.push({ id, label: `${id} - ${taxIdLookup.shortName || taxIdLookup.fullName}`, matchType: '税号精确' });
+    } else if (clientNameLookups.length > 0) {
       candidates = clientNameLookups.map(c => ({ id: c.id, label: `${c.id} - ${c.lookup.shortName || c.lookup.fullName}`, matchType: c.matchType }));
     }
 
@@ -2540,10 +2537,7 @@ function generateOutput() {
         const lookup = lookupShangShe(shangSheId);
         if (lookup) { fillShangSheInfo(out, lookup, rowContext); return; }
       }
-      if (bestLookup) {
-        fillShangSheInfo(out, bestLookup, rowContext);
-        return;
-      }
+      // 自动检测候选不直接填充，保持未匹配状态供手动选择器确认/切换
       unmatchedRows.push(rowIdx);
     });
   }
@@ -3053,6 +3047,9 @@ function showExportStep() {
       ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">💡 已根据客户信息缩小范围，找到 ${candidateList.length} 个候选商社（也可搜索其他商社）</div>`
       : '';
 
+    // 仅当唯一候选时预填搜索框，保留可切换的入口
+    const defaultCandidate = candidateList.length === 1 ? candidateList[0] : null;
+
     manualShangSheHTML = `
     <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🔗 手动匹配商社</div>
@@ -3060,7 +3057,7 @@ function showExportStep() {
       <div style="position:relative;">
         <div style="display:flex;gap:10px;align-items:center;">
           <div style="flex:1;">
-            ${createShangSheSearchHTML('manual', '输入编号、名称或税号搜索...', '', '')}
+            ${createShangSheSearchHTML('manual', '输入编号、名称或税号搜索...', defaultCandidate?.label || '', defaultCandidate?.id || '')}
           </div>
           <button class="btn btn-primary btn-sm" onclick="applyManualShangShe()">应用</button>
         </div>

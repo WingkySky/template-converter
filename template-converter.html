@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>灵工发放模版转换工具</title>
 <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
 <style>
   :root {
     --bg: #0f1117; --surface: #1a1d27; --surface2: #242836;
@@ -371,6 +372,9 @@ const state = {
   colIndex: {},
   // 列筛选状态：{ colIdx: Set(允许的值) }
   columnFilters: {},
+  // 身边云导出选项
+  sbyShowBatchInfo: false,   // 是否显示总笔数和总金额行（默认不显示）
+  sbyPlainAmount: true,      // 金额使用纯数字格式（默认纯数字，不带¥符号）
 };
 
 function updateOutputRow(rowIdx, colIdx, value) {
@@ -1580,7 +1584,7 @@ const TEMPLATES = {
     name: '身边云',
     icon: '☁️',
     desc: '付款模版（保留说明行、批次信息行和表头）',
-    headers: ['商户订单号（非必填）', '收款人姓名（必填）', '身份证号（必填）', '个人银行卡号（必填）', '付款金额（元，必填）', '手机号（必填）', '备注（非必填）'],
+    headers: ['商户订单号（非必填）', '收款人姓名（必填）', '身份证号（必填）', '个人银行卡号（必填）', '付款金额（元，必填）', '手机号（必填）', '备注（非必填）', '自定义备注（非必填）'],
     fieldMap: { name: '收款人姓名（必填）', idCard: '身份证号（必填）', bankCard: '个人银行卡号（必填）', amount: '付款金额（元，必填）', phone: '手机号（必填）', note: '备注（非必填）' },
   },
   youyi: {
@@ -1925,7 +1929,7 @@ function smartDetectTable(rows) {
     // Only skip if keyword cells dominate the non-empty cells (>60%) AND there are at least 3
     if (kwCells.length >= 3 && kwCells.length >= nonEmptyCells.length * 0.6) continue;
     // 多重校验：只保留真正是人员/单位发放数据的记录
-    if (!hasIdentityField(row)) { filteredNonPerson++; continue; }
+    if (!hasIdentityField(row, headerRow)) { filteredNonPerson++; continue; }
     dataRows.push(row);
   }
   return { headerRow, headerRowIndex: bestIdx, dataRows, filteredCount: filteredNonPerson };
@@ -1990,13 +1994,14 @@ const FEE_LABEL_RE = /费|平台|服务|合计|小计|总计|汇总|累计|税�
  *
  * 只要该行包含费用/汇总标签（如"平台服务费"），且没有任何强身份标识，则判定为非人员记录。
  */
-function hasIdentityField(row) {
+function hasIdentityField(row, headerRow) {
   let strongCount = 0;   // 强身份标识数量
   let nameLike = false;  // 拟似姓名
   let hasAmount = false;
   let nonEmptyCount = 0;
 
-  for (const cell of row) {
+  for (let ci = 0; ci < row.length; ci++) {
+    const cell = row[ci];
     const s = String(cell || '').trim();
     if (!s) continue;
     nonEmptyCount++;
@@ -2012,6 +2017,9 @@ function hasIdentityField(row) {
 
     // —— 拟似姓名：2-15 个中文字符（支持少数民族 ·）——
     if (/^[\u4e00-\u9fff·]{2,15}$/.test(s)) {
+      // 检查该列是否为地点/类型等非姓名列，避免将"天津"等地名误判为人名
+      const header = String(headerRow?.[ci] || '').trim();
+      if (/开户地|税源地|地址|地区|区域|城市|类型|方式|项目/.test(header)) continue;
       nameLike = true;
       continue;
     }
@@ -2089,7 +2097,7 @@ function detectColumnMapping(headerRow, dataRows) {
 
 function getAmountColumnScore(header, dataRows, ci) {
   const h = String(header || '').trim();
-  if (!h || /方式|类型|选择|状态|税源地|开户|账号|账户|手机号|电话|身份证|证件|银行|备注|说明|业务/.test(h)) return -Infinity;
+  if (!h || /序号|编号|方式|类型|选择|状态|税源地|开户|账号|账户|手机号|电话|身份证|证件|银行|备注|说明|业务|减除|扣除|速算|核定|预扣|免税|服务费|个税/.test(h)) return -Infinity;
   let score = 0;
   if (/税前金额|税前收入/i.test(h)) score += 12;
   else if (/计划发放收入|应发金额|实发金额|客户支付合计|付款金额|应发金额/i.test(h)) score += 9;
@@ -2100,7 +2108,9 @@ function getAmountColumnScore(header, dataRows, ci) {
   sample.forEach(row => { if (isAmountLikeNumber(row?.[ci])) hits++; });
   const ratio = hits / sample.length;
   score += ratio * 8;
-  if (ratio < 0.35) score -= 8;
+  // 仅在无关键词命中时才施加低命中率惩罚
+  // （低命中率通常因数据行质量差导致，表头关键词是更可靠的信号）
+  if (ratio < 0.35 && score < 6) score -= 8;
   return score;
 }
 
@@ -2342,7 +2352,9 @@ function cloneTemplateOutputState() {
     previewRowLimit: state.previewRowLimit,
     batchNo: state.batchNo || '',
     batchShangSheId: state.batchShangSheId || '',
-    batchShangSheName: state.batchShangSheName || ''
+    batchShangSheName: state.batchShangSheName || '',
+    sbyShowBatchInfo: state.sbyShowBatchInfo,
+    sbyPlainAmount: state.sbyPlainAmount
   };
 }
 
@@ -2366,6 +2378,8 @@ function restoreTemplateOutput(templateKey) {
   state.batchNo = cached.batchNo || '';
   state.batchShangSheId = cached.batchShangSheId || '';
   state.batchShangSheName = cached.batchShangSheName || '';
+  state.sbyShowBatchInfo = cached.sbyShowBatchInfo ?? false;
+  state.sbyPlainAmount = cached.sbyPlainAmount ?? true;
   return true;
 }
 
@@ -3082,6 +3096,23 @@ function showExportStep() {
     </div>`;
   }
 
+  // 身边云导出选项
+  let sbyOptionsHTML = '';
+  if (state.targetTemplate === 'shenbianyun' || getSelectedTemplates().includes('shenbianyun')) {
+    sbyOptionsHTML = `
+    <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px;">☁️ 身边云导出选项</div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:8px;">
+        <input type="checkbox" id="sby-show-batch-info" onchange="onSbyOptionChange()" ${state.sbyShowBatchInfo?'checked':''} style="accent-color:var(--accent);">
+        填写总笔数和总金额（不勾选则留空）
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="sby-plain-amount" onchange="onSbyOptionChange()" ${state.sbyPlainAmount?'checked':''} style="accent-color:var(--accent);">
+        金额使用纯数字格式（不带 ¥ 符号）
+      </label>
+    </div>`;
+  }
+
   let noteControlsHTML = '';
   if (hasNoteColumn && rows.length > 0) {
     noteControlsHTML = `
@@ -3124,6 +3155,7 @@ function showExportStep() {
     ${previewSwitchHTML}
     ${kbMatchHTML}
     ${batchNoHTML}
+    ${sbyOptionsHTML}
     ${manualShangSheHTML}
     ${state.cleanCount > 0 ? `<div class="status-msg info">🧹 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
     ${batchControlsHTML}
@@ -3256,6 +3288,14 @@ function applyPlatformToAll() {
 
 function onBatchNoChange(inputEl) {
   state.batchNo = String(inputEl.value || '').trim();
+  cacheCurrentTemplateOutput();
+}
+
+function onSbyOptionChange() {
+  const showBatchEl = document.getElementById('sby-show-batch-info');
+  const plainAmountEl = document.getElementById('sby-plain-amount');
+  state.sbyShowBatchInfo = showBatchEl ? showBatchEl.checked : false;
+  state.sbyPlainAmount = plainAmountEl ? plainAmountEl.checked : true;
   cacheCurrentTemplateOutput();
 }
 
@@ -3720,6 +3760,35 @@ function getBatchNoForTemplate(templateKey) {
  * falls back to auto-download for unsupported browsers.
  */
 async function saveWorkbook(wb, defaultName) {
+  // ExcelJS buffer 结果（身边云模版）
+  if (wb && wb.__exceljsBuffer) {
+    const data = wb.__exceljsBuffer;
+    if (window.showSaveFilePicker) {
+      try {
+        const opts = {
+          suggestedName: defaultName,
+          types: [{ description: 'Excel 文件', accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] } }],
+        };
+        if (state.lastSaveDir) opts.startIn = state.lastSaveDir;
+        const handle = await window.showSaveFilePicker(opts);
+        state.lastSaveDir = handle;
+        const writable = await handle.createWritable();
+        await writable.write(data);
+        await writable.close();
+        return true;
+      } catch (e) {
+        if (e.name === 'AbortError') return false;
+        console.warn('showSaveFilePicker failed, falling back:', e);
+      }
+    }
+    const blob = new Blob([data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = defaultName;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    return true;
+  }
   if (window.showSaveFilePicker) {
     try {
       const opts = {
@@ -3804,6 +3873,7 @@ async function saveBlobAsFile(blob, defaultName, description, accept) {
 }
 
 function workbookToArray(wb) {
+  if (wb && wb.__exceljsBuffer) return wb.__exceljsBuffer;
   return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
 }
 
@@ -3896,13 +3966,13 @@ async function exportExcel() {
   const headers = state.outputHeaders;
   const rows = state.outputRows;
   const fileName = getExportFileName('xlsx');
-  const wb = buildWorkbookForTemplate(state.targetTemplate, headers, rows);
+  const wb = await buildWorkbookForTemplate(state.targetTemplate, headers, rows);
   return await saveWorkbook(wb, fileName);
 }
 
-function buildWorkbookForTemplate(templateKey, headers, rows) {
+async function buildWorkbookForTemplate(templateKey, headers, rows) {
   if (templateKey === 'yidao') return buildYidaoWorkbook(headers, rows);
-  if (templateKey === 'shenbianyun') return buildShenbianyunWorkbook(headers, rows, getBatchNoForTemplate(templateKey));
+  if (templateKey === 'shenbianyun') return await buildShenbianyunWorkbook(headers, rows, getBatchNoForTemplate(templateKey));
   if (templateKey === 'youyi') return buildYouyiWorkbook(headers, rows);
   return buildGenericWorkbook(headers, rows);
 }
@@ -3924,7 +3994,10 @@ async function exportSelectedExcel() {
     }
     const cached = state.templateOutputs?.[templateKey];
     if (!cached?.outputHeaders || !cached?.outputRows) continue;
-    const wb = buildWorkbookForTemplate(templateKey, cached.outputHeaders, cached.outputRows);
+    // 恢复该模版缓存的身边云导出选项
+    state.sbyShowBatchInfo = cached.sbyShowBatchInfo ?? false;
+    state.sbyPlainAmount = cached.sbyPlainAmount ?? true;
+    const wb = await buildWorkbookForTemplate(templateKey, cached.outputHeaders, cached.outputRows);
     files.push({
       name: getExportFileNameForTemplate(templateKey, 'xlsx'),
       data: workbookToArray(wb)
@@ -3963,36 +4036,87 @@ function buildYidaoWorkbook(headers, rows) {
   return wb;
 }
 
-// 身边云: Row1=instructions(merged), Row2=batch info, Row3=empty, Row4=header, Row5+=data
-function buildShenbianyunWorkbook(headers, rows, batchNo = '') {
+// 身边云: 使用 ExcelJS 保留原版模板完整样式
+// Row1=instructions(merged A1:H1), Row2=batch labels, Row3=batch values, Row4=header, Row5+=data
+async function buildShenbianyunWorkbook(headers, rows, batchNo = '') {
   const amountIdx = headers.indexOf('付款金额（元，必填）');
   const totalAmount = rows.reduce((sum, row) => sum + (parseFloat(String(row[amountIdx] || '').replace(/,/g, '')) || 0), 0);
-  // 将付款金额列转换为数值类型，避免 Excel 识别为文本
-  const numericRows = rows.map(row => {
-    if (amountIdx < 0) return row;
-    const out = [...row];
-    const n = parseFloat(String(out[amountIdx] || '').replace(/,/g, ''));
-    out[amountIdx] = isNaN(n) ? '' : Math.round(n * 100) / 100;
-    return out;
+
+  const showBatchInfo = state.sbyShowBatchInfo;
+  const plainAmount = state.sbyPlainAmount;
+  const amtFmt = plainAmount ? '#,##0.00' : '¥#,##0.00';
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('个人银行账户批量付款模板');
+
+  // 列宽（与原版模板一致）
+  const colWidths = [20.15, 34.0, 26.08, 20.15, 20.15, 20.15, 14.39, 22.45];
+  colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+
+  // 各列数字格式（金额列根据选项切换货币/纯数字）
+  const colNumFmts = ['@', '@', '@', amtFmt, amtFmt, '@', amtFmt, amtFmt];
+
+  // Row 1: 说明文字（合并 A1:H1）
+  ws.getRow(1).height = 121;
+  ws.mergeCells('A1:H1');
+  const cellA1 = ws.getCell('A1');
+  cellA1.value = '单批次最大支持12000条订单。\n商户订单号纯数字并且唯一，禁止重复。\n付款金额保留两位小数，四舍五入。\n备注字段最大限制20字，银行备注展示限制具体以银行为准。\n付款文件名称或备注存在以下字段会导致文件上传失败：工资、薪酬、提现、薪、补贴、分红、奖金、返现、劳务费、分润、备用金、¥、$\n银行卡号建议使用一类户，如使用二类户日限额导致交易退汇，需T+8个工作日退回';
+  cellA1.font = { name: '微软雅黑', size: 12, color: { argb: 'FFFF0000' } };
+  cellA1.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+  cellA1.numFmt = '@';
+
+  // Row 2: 批次标签（始终保留，A2/B2/C2 有样式，与原版一致）
+  const batchLabels = ['商户批次号（非必填）', '总笔数（非必填）', '总金额（元，非必填）'];
+  batchLabels.forEach((label, i) => {
+    const cell = ws.getCell(2, i + 1);
+    cell.value = label;
+    cell.font = { name: '微软雅黑', size: 12, color: { argb: 'FF9C6500' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEB9C' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.numFmt = '@';
   });
-  const wsData = [
-    ['单批次最大支持1000条订单。\n商户订单号纯数字并且唯一，禁止重复。\n付款金额保留两位小数，四舍五入。\n备注字段最大限制20字，银行备注展示限制具体以银行为准。\n付款文件名称或备注存在以下字段会导致文件上传失败：工资、薪酬、提现、薪、补贴、分红、奖金、返现、劳务费、分润、备用金、¥、$\n银行卡号建议使用一类户，如使用二类户日限额导致交易退汇，需T+8个工作日退回','','','','','',''],
-    ['商户批次号（非必填）','总笔数（非必填）','总金额（元，非必填）','','','',''],
-    [batchNo || '', rows.length || '', totalAmount ? Math.round(totalAmount * 100) / 100 : '','','','',''],
-    headers,
-    ...numericRows
-  ];
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  // Merge row 1 across all columns
-  ws['!merges'] = [{ s: {r:0,c:0}, e: {r:0,c:6} }];
-  ws['!cols'] = headers.map((h, i) => {
-    let max = h.length;
-    rows.forEach(r => { const l = String(r[i]||'').length; if (l > max) max = l; });
-    return { wch: Math.min(max + 2, 30) };
+
+  // Row 3: 批次值（始终保留结构；B3/C3 根据选项决定是否填入数字）
+  const cellA3 = ws.getCell('A3');
+  cellA3.value = batchNo || '';
+  const cellB3 = ws.getCell('B3');
+  cellB3.value = showBatchInfo ? (rows.length || '') : '';
+  const cellC3 = ws.getCell('C3');
+  cellC3.value = (showBatchInfo && totalAmount) ? Math.round(totalAmount * 100) / 100 : '';
+  cellC3.font = { name: '微软雅黑', size: 12 };
+  cellC3.alignment = { horizontal: 'center', vertical: 'middle' };
+  cellC3.numFmt = amtFmt;
+
+  // Row 4: 表头（与原版一致的绿色样式）
+  headers.forEach((header, i) => {
+    const cell = ws.getCell(4, i + 1);
+    cell.value = header;
+    cell.font = { name: '微软雅黑', size: 12, color: { argb: 'FF006100' } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6EFCE' } };
+    cell.alignment = { horizontal: 'center', vertical: 'middle' };
+    cell.numFmt = colNumFmts[i] || '@';
   });
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '个人银行账户批量付款模板');
-  return wb;
+
+  // Row 5+: 数据行
+  const dataStartRow = 5;
+  rows.forEach((row, rowIdx) => {
+    const excelRow = rowIdx + dataStartRow;
+    row.forEach((val, colIdx) => {
+      const cell = ws.getCell(excelRow, colIdx + 1);
+      cell.font = { name: '微软雅黑', size: 12 };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.numFmt = colNumFmts[colIdx] || '@';
+      if (colIdx === amountIdx && val !== '' && !isNaN(parseFloat(String(val).replace(/,/g, '')))) {
+        const n = parseFloat(String(val).replace(/,/g, ''));
+        cell.value = Math.round(n * 100) / 100;
+      } else {
+        cell.value = val;
+      }
+    });
+  });
+
+  const buffer = await wb.xlsx.writeBuffer();
+  return { __exceljsBuffer: buffer };
 }
 
 // 云杉公司: 从头生成费用明细 + 动态生成配置表和任务清单

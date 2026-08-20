@@ -2117,7 +2117,8 @@ function getAmountColumnScore(header, dataRows, ci) {
 function isAmountLikeNumber(value) {
   const raw = String(value == null ? '' : value).trim();
   if (!raw) return false;
-  const compact = raw.replace(/,/g, '');
+  // 剥离货币符号（货币格式单元格经 raw:false 读取后形如 "¥90,100.00"）
+  const compact = raw.replace(/[¥￥$€£,，\s]/g, '').replace(/(元|人民币)$/,'');
   if (/^\d{11}$/.test(compact) || /^\d{16,19}$/.test(compact) || /^\d{17}[\dXx]$/.test(compact)) return false;
   const num = parseFloat(compact);
   return !isNaN(num) && isFinite(num) && num > 0 && num < 1e8;
@@ -2627,7 +2628,8 @@ function genCustom() {
 
 function sanitizeAmount(val) {
   if (val == null) return '';
-  const n = parseFloat(String(val).trim().replace(/,/g, ''));
+  // raw:false 读取时货币格式的单元格会带 ¥/$ 等符号（如 "¥90,100.00"），需先剥离再解析
+  const n = parseFloat(String(val).trim().replace(/[¥￥$€£,，\s]/g, '').replace(/(元|人民币)$/,''));
   return isNaN(n) ? '' : String(Math.round(n * 100) / 100);
 }
 

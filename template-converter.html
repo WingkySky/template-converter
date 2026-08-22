@@ -2456,6 +2456,9 @@ function generateOutput() {
           const bankLocationIdx = tpl.headers.indexOf('银行所属地');
           if (taxIdx >= 0) out[taxIdx] = '0';
           if (insuranceIdx >= 0) out[insuranceIdx] = '0';
+          if (bankNameIdx >= 0 && !out[bankNameIdx]) {
+            out[bankNameIdx] = '0';
+          }
           if (bankLocationIdx >= 0 && !out[bankLocationIdx]) {
             out[bankLocationIdx] = inferBankLocationFromBranch(bankNameIdx >= 0 ? out[bankNameIdx] : '');
           }

@@ -31,14 +31,14 @@
     </div>
     <div class="kb-btn-row">
       <button class="btn btn-primary" onclick="document.getElementById('kb-upload-input').click()">📤 上传知识库</button>
-      <input type="file" id="kb-upload-input" accept=".xlsx,.xls" style="display:none;" onchange="handleKBUpload(event)">
-      <button class="btn btn-orange btn-sm" onclick="downloadKBSample()">📄 下载样例文件</button>
+      <input type="file" id="kb-upload-input" accept=".xlsx,.xls" style="display:none;">
+      <button class="btn btn-orange btn-sm">📄 下载样例文件</button>
       <button class="btn btn-secondary btn-sm" onclick="document.getElementById('kb-config-upload-input').click()">🔄 更新配置数据</button>
-      <input type="file" id="kb-config-upload-input" accept=".xlsx,.xls" style="display:none;" onchange="handleKBConfigUpload(event)">
-      <button class="btn btn-secondary" onclick="exportKBToExcel()">💾 导出备份</button>
+      <input type="file" id="kb-config-upload-input" accept=".xlsx,.xls" style="display:none;">
+      <button class="btn btn-secondary">💾 导出备份</button>
       <button class="btn btn-secondary" onclick="document.getElementById('kb-import-input').click()">📥 导入备份</button>
-      <input type="file" id="kb-import-input" accept=".xlsx,.xls,.json" style="display:none;" onchange="handleKBImport(event)">
-      <button class="btn btn-red btn-sm" onclick="clearKB()">🗑️ 清空知识库</button>
+      <input type="file" id="kb-import-input" accept=".xlsx,.xls,.json" style="display:none;">
+      <button class="btn btn-red btn-sm">🗑️ 清空知识库</button>
     </div>
   </div>
 
@@ -48,7 +48,7 @@
       第一步：上传样例文件
     </div>
     <div class="upload-area" id="upload-area">
-      <input type="file" id="file-input" accept=".csv,.xlsx,.xls" multiple onchange="handleFileInput(event)">
+      <input type="file" id="file-input" accept=".csv,.xlsx,.xls" multiple>
       <div class="icon">📤</div>
       <div class="title">点击或拖拽上传 CSV / Excel 文件</div>
       <div class="desc">

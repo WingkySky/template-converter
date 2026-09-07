@@ -14,7 +14,32 @@ export async function getLegacy() {
   setupBrowserStubs();
   stubVendorGlobals(XLSX, ExcelJS);
   await import('../../src/legacy.js');
-  loaded = { XLSX, ExcelJS, w: globalThis.window };
+  // 阶段 3 接缝：步骤模块的 confirmTemplate→generateOutput / resetAll 委托需要装配
+  const w = globalThis.window;
+  const legacyNs = await import('../../src/legacy.js');
+  const templateMod = await import('../../src/ui/steps/template');
+  const { setResetAllHandler } = await import('../../src/ui/steps/upload');
+  const { setExportControlsDeps } = await import('../../src/ui/export/controls');
+  const { setPreviewTableDeps } = await import('../../src/ui/export/preview-table');
+  const { setRemarkPanelDeps } = await import('../../src/ui/export/remark-panel');
+  const { setSearchDropdownDeps } = await import('../../src/ui/search-dropdown');
+  templateMod.setGenerateOutputHandler(legacyNs.generateOutput);
+  setResetAllHandler(legacyNs.resetAll);
+  // 渲染器依赖注入（浏览器侧由 main.ts 调 initExportPanelHandlers 完成同等装配）
+  const deps = {
+    showExportStep: legacyNs.showExportStep,
+    cacheCurrentTemplateOutput: legacyNs.cacheCurrentTemplateOutput,
+    getSelectedTemplates: templateMod.getSelectedTemplates,
+    getSplitGroups: legacyNs.getSplitGroups,
+    getSplitGroupCounts: legacyNs.getSplitGroupCounts,
+    isSplitExportActive: legacyNs.isSplitExportActive,
+    ensureSplitBatches: legacyNs.ensureSplitBatches,
+  };
+  setExportControlsDeps(deps);
+  setPreviewTableDeps(deps);
+  setRemarkPanelDeps(deps);
+  setSearchDropdownDeps(deps);
+  loaded = { XLSX, ExcelJS, w };
   return loaded;
 }
 

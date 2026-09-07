@@ -29,10 +29,15 @@
 npm install        # 安装依赖（xlsx 来自 SheetJS 官方 tarball，exceljs 4.4.0）
 npm run dev        # 本地开发（http://localhost:5173）
 npm run build      # 产出纯静态 dist/（相对路径，任意静态托管可用）
+npm run build:single  # 产出单文件 dist-single/index.html（全内联，双击即可打开）
 npm run preview    # 本地预览构建产物
 ```
 
 部署：把 `dist/` 拷贝到任意静态服务器（nginx / GitHub Pages / 内网文件服务器）即可，无需 Node 环境与外网。
+
+### 双击使用（免部署）
+
+`npm run build:single` 产出约 1.5MB 的 `dist-single/index.html`，JS/CSS/xlsx/exceljs 全部内联、零外部请求，**双击即可在浏览器中打开使用**（file:// 下内联模块不受 CORS 限制，已用无头浏览器实测）。适合邮件/IM 分发给同事单机使用。注意：单文件模式下 localStorage 按文件来源隔离，与挂网版本的知识库互不相通。
 
 ## 测试与回归保障
 

@@ -39,3 +39,6 @@ initExportPanelHandlers({
 
 // 导出步骤动态 HTML 中残留内联 onclick 的收尾接线（导出按钮/模版切换/genCustom/goBack）
 initExportStepDelegates();
+
+// e2e 冒烟标记：headless 验证单文件构建（dist-single）在 file:// 下已完成启动
+document.documentElement.dataset.appBoot = 'ok';

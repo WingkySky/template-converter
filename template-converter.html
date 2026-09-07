@@ -2667,8 +2667,12 @@ function cleanValue(val, type) {
     s = s.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
     // Normalize full-width letters (Ａ-Ｚ, ａ-ｚ) → half-width (A-Z, a-z)
     s = s.replace(/[Ａ-Ｚａ-ｚ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
-    // 身份证末位校验码统一转大写 X（客户数据常见小写 x / 全角ｘ导致平台导入失败）
-    if (type === 'idCard') s = s.replace(/^(\d{17})[xX]$/, '$1X');
+    // 身份证末位校验码归一化：X 的形近字符（罗马数字 Ⅹ/ⅹ、西里尔字母 Х/х）→ X，
+    // 小写 x 统一转大写（客户数据常见非标准写法导致平台导入失败）
+    if (type === 'idCard') {
+      s = s.replace(/[\u2169\u2179\u0425\u0445]/g, 'X');
+      s = s.replace(/^(\d{17})[xX]$/, '$1X');
+    }
   }
   return s;
 }

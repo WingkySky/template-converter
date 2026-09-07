@@ -16,9 +16,9 @@ export type ColType =
   | 'gender' | 'bankLocation' | 'taxSource' | 'note' | 'clientName' | 'taxId'
   | string;
 
-/** 单列的识别结果 */
+/** 单列的识别结果（type 与 core/mapping/column-detect 的 DetectedColumn 对齐：string，空串表示未识别） */
 export interface ColumnInfo {
-  type: ColType | null;
+  type: string | null;
   header: string;
   samples: string[];
 }
@@ -28,11 +28,19 @@ export interface ColumnTypeMap {
   [colIdx: string]: ColumnInfo;
 }
 
-/** detectColumnMapping 的返回 */
+/** detectColumnMapping 的返回（amountCol/nameCol 由 analyzeSheet 事后补写，故为可选） */
 export interface AutoMap {
   cols: ColumnTypeMap;
-  amountCol: number | null;
-  nameCol: number | null;
+  amountCol?: number | null;
+  nameCol?: number | null;
+}
+
+/** 输出行元数据（generateOutput 产出的 outputRowMeta 元素；state.ts 的同名接口与此形状一致） */
+export interface OutputRowMeta {
+  fileName: string;
+  sheetName: string;
+  rawRow: unknown[];
+  typeToCol: Record<string, number | null>;
 }
 
 /** analyzeSheet 的返回（数据源分析结果） */

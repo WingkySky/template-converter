@@ -1,6 +1,4 @@
 import './style.css';
-import './vendor-globals';
-import './legacy.js';
 import { byId } from './ui/dom';
 import { initKbPanel } from './ui/steps/kb-panel';
 import {
@@ -13,7 +11,8 @@ import { getSelectedTemplates } from './ui/steps/template';
 import {
   generateOutput, resetAll, showExportStep, cacheCurrentTemplateOutput,
   getSplitGroups, getSplitGroupCounts, isSplitExportActive, ensureSplitBatches,
-} from './legacy.js';
+  initExportStepDelegates,
+} from './ui/steps/export';
 
 // ==================== 装配 ====================
 initKbPanel();
@@ -23,7 +22,7 @@ initMappingDelegates();
 initTemplateDelegates();
 byId('file-input').addEventListener('change', handleFileInput);
 
-// 编排层接缝（upload/mapping/template 模块不反向依赖 legacy 编排）
+// 编排层接缝（upload/mapping/template 模块不反向依赖 export 编排）
 setResetAllHandler(resetAll);
 setGenerateOutputHandler(generateOutput);
 
@@ -37,3 +36,6 @@ initExportPanelHandlers({
   isSplitExportActive,
   ensureSplitBatches,
 });
+
+// 导出步骤动态 HTML 中残留内联 onclick 的收尾接线（导出按钮/模版切换/genCustom/goBack）
+initExportStepDelegates();

@@ -1,7 +1,7 @@
-// 基线驱动器共享模块：以真实 UI 入口驱动 legacy 管道
+// 基线驱动器共享模块：以真实 UI 入口驱动转换管道
 // （handleFiles → selectTemplate → confirmTemplate → generateOutput），
 // 产物为「导出落盘前的字节」，绕过 saveWorkbook 的文件系统副作用。
-// 阶段 1-3 期间经 window 测试面桥接调用；阶段 4 起切换为直连 core 模块。
+// 阶段 4 起 legacy.js/window 测试面已退役，本驱动器直连 ui/steps 等模块（window 不再使用）。
 import { readFileSync } from 'node:fs';
 import * as XLSX from 'xlsx';
 import ExcelJS from 'exceljs';
@@ -13,32 +13,54 @@ export async function getLegacy() {
   if (loaded) return loaded;
   setupBrowserStubs();
   stubVendorGlobals(XLSX, ExcelJS);
-  await import('../../src/legacy.js');
-  // 阶段 3 接缝：步骤模块的 confirmTemplate→generateOutput / resetAll 委托需要装配
-  const w = globalThis.window;
-  const legacyNs = await import('../../src/legacy.js');
+  const stateMod = await import('../../src/state');
+  const exportMod = await import('../../src/ui/steps/export');
   const templateMod = await import('../../src/ui/steps/template');
-  const { setResetAllHandler } = await import('../../src/ui/steps/upload');
+  const uploadMod = await import('../../src/ui/steps/upload');
+  const mappingMod = await import('../../src/ui/steps/mapping');
+  const csvMod = await import('../../src/core/export/csv');
+  const modelMod = await import('../../src/core/kb/model');
+  const kbStorageMod = await import('../../src/io/kb-storage');
+  const registryMod = await import('../../src/core/templates/registry');
+  // 阶段 3 接缝：步骤模块的 confirmTemplate→generateOutput / resetAll 委托需要装配
   const { setExportControlsDeps } = await import('../../src/ui/export/controls');
   const { setPreviewTableDeps } = await import('../../src/ui/export/preview-table');
   const { setRemarkPanelDeps } = await import('../../src/ui/export/remark-panel');
   const { setSearchDropdownDeps } = await import('../../src/ui/search-dropdown');
-  templateMod.setGenerateOutputHandler(legacyNs.generateOutput);
-  setResetAllHandler(legacyNs.resetAll);
+  templateMod.setGenerateOutputHandler(exportMod.generateOutput);
+  uploadMod.setResetAllHandler(exportMod.resetAll);
   // 渲染器依赖注入（浏览器侧由 main.ts 调 initExportPanelHandlers 完成同等装配）
   const deps = {
-    showExportStep: legacyNs.showExportStep,
-    cacheCurrentTemplateOutput: legacyNs.cacheCurrentTemplateOutput,
+    showExportStep: exportMod.showExportStep,
+    cacheCurrentTemplateOutput: exportMod.cacheCurrentTemplateOutput,
     getSelectedTemplates: templateMod.getSelectedTemplates,
-    getSplitGroups: legacyNs.getSplitGroups,
-    getSplitGroupCounts: legacyNs.getSplitGroupCounts,
-    isSplitExportActive: legacyNs.isSplitExportActive,
-    ensureSplitBatches: legacyNs.ensureSplitBatches,
+    getSplitGroups: exportMod.getSplitGroups,
+    getSplitGroupCounts: exportMod.getSplitGroupCounts,
+    isSplitExportActive: exportMod.isSplitExportActive,
+    ensureSplitBatches: exportMod.ensureSplitBatches,
   };
   setExportControlsDeps(deps);
   setPreviewTableDeps(deps);
   setRemarkPanelDeps(deps);
   setSearchDropdownDeps(deps);
+  // 原 window 测试面 → 直连模块绑定（键名与阶段 1-3 的 w.* 保持一致）
+  const w = {
+    state: stateMod.state,
+    resetAll: exportMod.resetAll,
+    handleFiles: uploadMod.handleFiles,
+    confirmMapping: mappingMod.confirmMapping,
+    selectTemplate: templateMod.selectTemplate,
+    confirmTemplate: templateMod.confirmTemplate,
+    generateOutput: exportMod.generateOutput,
+    buildWorkbookForTemplate: exportMod.buildWorkbookForTemplate,   // 查注册表分发，ctx 从 state 构造
+    buildSplitFilesForTemplates: exportMod.buildSplitFilesForTemplates,
+    getExportFileNameForTemplate: exportMod.getExportFileNameForTemplate,
+    rowsToCSV: csvMod.rowsToCSV,
+    mergeKnowledgeRows: modelMod.mergeKnowledgeRows,
+    loadKB: kbStorageMod.loadKB,
+    saveKB: kbStorageMod.saveKB,
+    __legacy: { state: stateMod.state, TEMPLATES: registryMod.TEMPLATES },
+  };
   loaded = { XLSX, ExcelJS, w };
   return loaded;
 }

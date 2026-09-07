@@ -3,7 +3,7 @@
 // （click 与 keydown 两个事件类型都挂在 #template-content 容器上）。
 import { escapeHTML, byId, delegateAction } from '../dom';
 import { state } from '../../state';
-import { TEMPLATES } from '../../templates';
+import { TEMPLATES } from '../../core/templates/registry';
 
 // ---- generateOutput 接缝 ----
 // generateOutput 本体仍在 legacy.js（阶段 3 主智能体第二批随 steps/export.ts 落位），

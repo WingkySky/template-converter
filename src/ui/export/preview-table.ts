@@ -9,7 +9,7 @@
 // 取数路径（loadKB + getConfigLists/uniqueTaxSources）重算，值与原一致。
 import { state, DEFAULT_PREVIEW_ROW_LIMIT, PREVIEW_ROW_INCREMENT } from '../../state';
 import { escapeHTML, delegateAction, byId } from '../dom';
-import { getTasksForShangShe } from '../legacy-bridge';
+import { getTasksForShangShe } from '../steps/export';
 import { loadKB } from '../../io/kb-storage';
 import { getConfigLists } from '../../core/kb/model';
 import { uniqueTaxSources } from '../../core/kb/tax-source';

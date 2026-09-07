@@ -16,7 +16,7 @@ import { escapeHTML, delegateAction, byId } from '../dom';
 import {
   updateOutputRow, taxSourceForPlatform, getTasksForShangShe, applyBatchShangShe,
   fillShangSheInfoForRow, lookupShangShe, splitGroupLabelBridge,
-} from '../legacy-bridge';
+} from '../steps/export';
 import { parseTaskString, inferWorkType } from '../../core/kb/task';
 import type { FillRowContext } from '../../core/kb/shangshe-fill';
 import type { SplitGroup } from '../../core/export/split-core';

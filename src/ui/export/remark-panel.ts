@@ -9,7 +9,7 @@
 // showExportStep 依赖经 set/init 注入（不 import legacy.js、不挂 window）。
 import { state } from '../../state';
 import { delegateAction, byId } from '../dom';
-import { updateOutputRow, getRemarkPresetValue } from '../legacy-bridge';
+import { updateOutputRow, getRemarkPresetValue } from '../steps/export';
 import { visiblePreviewRowCount } from './preview-table';
 
 export function getNoteColIdx(): number {

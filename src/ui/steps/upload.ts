@@ -4,20 +4,10 @@
 import * as XLSX from 'xlsx';
 import { byId, delegateAction } from '../dom';
 import { state } from '../../state';
-import type { SourceItem } from '../../types';
 import { parseCSV, isGarbled } from '../../core/parser/parse-csv';
 import { buildSourceItem } from '../../core/parser/source-item';
-import type { SourceItemData } from '../../core/parser/source-item';
 import { analyzeWorkbookSheets } from '../../core/parser/excel';
 import { showMappingStep } from './mapping';
-
-// types.ts 的 SheetAnalysis.autoMap.amountCol/nameCol 为必填，而
-// core/parser/excel 的 ColumnMapping 中为可选（detectColumnMapping 不产出、
-// analyzeSheet 事后补写）——运行时是同一形状，仅类型面不一致。
-// 以桥接断言对齐，阶段 4 类型收敛时由主智能体统一（本文件不改 state/types/core）。
-function pushSource(item: SourceItemData): void {
-  state.sources.push(item as unknown as SourceItem);
-}
 
 // ---- resetAll 接缝 ----
 // resetAll 本体随导出/重置侧归属主智能体（steps/export.ts，尚未落位），此处不得
@@ -67,12 +57,12 @@ export function processFile(file: File): void {
       if (isGarbled(text)) {
         const r2 = new FileReader();
         r2.onload = e2 => {
-          pushSource(buildSourceItem({ type: 'csv', fileName: file.name, rows: parseCSV((e2.target as FileReader).result as string) }));
+          state.sources.push(buildSourceItem({ type: 'csv', fileName: file.name, rows: parseCSV((e2.target as FileReader).result as string) }));
           onFileParsed();
         };
         r2.readAsText(file, 'gbk');
       } else {
-        pushSource(buildSourceItem({ type: 'csv', fileName: file.name, rows: parseCSV(text) }));
+        state.sources.push(buildSourceItem({ type: 'csv', fileName: file.name, rows: parseCSV(text) }));
         onFileParsed();
       }
     };
@@ -83,7 +73,7 @@ export function processFile(file: File): void {
       const data = (e.target as FileReader).result as ArrayBuffer;
       const wb = XLSX.read(data, { type: 'array' });
       const sheetItems = analyzeWorkbookSheets(wb, file.name);
-      sheetItems.forEach(item => pushSource(item));
+      sheetItems.forEach(item => state.sources.push(item));
       // Store raw ArrayBuffer for template-based export
       state.templateFiles[file.name] = data;
       onFileParsed();

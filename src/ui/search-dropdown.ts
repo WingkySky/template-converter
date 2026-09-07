@@ -10,7 +10,7 @@
 import { state } from '../state';
 import { escapeHTML, delegateAction, byId } from './dom';
 import { normalizeSearchText } from './column-filter';
-import { lookupShangShe } from './legacy-bridge';
+import { lookupShangShe } from './steps/export';
 import { dedupeBatchNo, buildBatchNoFromShangShe } from '../core/kb/batch';
 
 /** state.shangSheFullList 元素的运行时完整形状（state.ts 的声明是旧窄形状，此处按原字段读取） */

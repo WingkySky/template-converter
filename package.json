@@ -11,8 +11,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "compare": "tsx tests/tools/compare.mjs",
-    "baseline": "tsx tests/tools/baseline.mjs",
-    "check-bridge": "tsx tests/tools/check-bridge.mjs"
+    "baseline": "tsx tests/tools/baseline.mjs"
   },
   "dependencies": {
     "exceljs": "4.4.0",

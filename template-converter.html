@@ -2137,21 +2137,10 @@ function showMappingStep() {
   document.getElementById('step-mapping').classList.remove('hidden');
 
   const sel = state.sources.filter(s => s.selected);
-  if (!sel.length) {
-    container.innerHTML = '<div class="status-msg error">⚠️ 未选择可导入的数据表</div>';
-    return;
-  }
 
-  const source = sel.find(s => s.id === state.previewSourceId) || sel[0];
-  state.previewSourceId = source.id;
-
-  const { headerRow, headerRowIndex, dataRows, filteredCount } = smartDetectTable(source.rows);
-  const autoMap = detectColumnMapping(headerRow, dataRows);
-  state.mappingState = { headerRow, headerRowIndex, dataRows, mapping: autoMap, source, filteredCount: filteredCount || 0 };
-
-  // Source selection
+  // Source selection cards：多源时始终展示；全部取消勾选时也展示，便于重新勾选
   let sourceHTML = '';
-  if (state.sources.length > 1) {
+  if (state.sources.length > 1 || !sel.length) {
     const cards = state.sources.map(item => {
       const desc = item.type === 'excel-sheet' ? `${item.fileName} / ${item.sheetName}` : item.fileName;
       const isP = item.id === state.previewSourceId;
@@ -2172,6 +2161,20 @@ function showMappingStep() {
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">${cards}</div>
     </div>`;
   }
+
+  if (!sel.length) {
+    container.innerHTML = `
+      ${sourceHTML}
+      <div class="status-msg error">⚠️ 请至少勾选一个数据表以继续列映射</div>`;
+    return;
+  }
+
+  const source = sel.find(s => s.id === state.previewSourceId) || sel[0];
+  state.previewSourceId = source.id;
+
+  const { headerRow, headerRowIndex, dataRows, filteredCount } = smartDetectTable(source.rows);
+  const autoMap = detectColumnMapping(headerRow, dataRows);
+  state.mappingState = { headerRow, headerRowIndex, dataRows, mapping: autoMap, source, filteredCount: filteredCount || 0 };
 
   // Column mapping
   const colIndices = Object.keys(autoMap.cols).map(Number).sort((a,b)=>a-b);
@@ -2664,6 +2667,8 @@ function cleanValue(val, type) {
     s = s.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
     // Normalize full-width letters (Ａ-Ｚ, ａ-ｚ) → half-width (A-Z, a-z)
     s = s.replace(/[Ａ-Ｚａ-ｚ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
+    // 身份证末位校验码统一转大写 X（客户数据常见小写 x / 全角ｘ导致平台导入失败）
+    if (type === 'idCard') s = s.replace(/^(\d{17})[xX]$/, '$1X');
   }
   return s;
 }

@@ -319,7 +319,7 @@ export function renderExportControls(): string {
           style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:4px;padding:6px 10px;color:var(--text);font-size:13px;outline:none;"
           data-action="filterPlatformList" autocomplete="off">
         <input type="hidden" id="platform-selected-val" value="">
-        <div id="platform-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:200px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,0.3);"></div>
+        <div id="platform-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:200px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:200;box-shadow:var(--shadow-pop);"></div>
       </div>
       <button class="btn btn-secondary btn-sm" data-action="applyPlatformToAll">应用到所有行</button>
     </div>`;

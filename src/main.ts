@@ -23,6 +23,20 @@ document.querySelectorAll<HTMLElement>('[data-icon]').forEach((el) => {
   el.innerHTML = icon(el.dataset.icon || 'info', Number(el.dataset.size || 16));
 });
 
+// 主题切换：明/暗，持久化到 localStorage（初始值由 index.html 头部脚本预设）
+const themeBtn = byId('theme-toggle');
+const syncThemeIcon = (): void => {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  themeBtn.innerHTML = icon(dark ? 'sun' : 'moon', 15);
+};
+themeBtn.addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  try { localStorage.setItem('tc-theme', next); } catch { /* 隐私模式忽略 */ }
+  syncThemeIcon();
+});
+syncThemeIcon();
+
 // ==================== 装配 ====================
 initKbPanel();
 initUploadArea();

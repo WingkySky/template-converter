@@ -39,7 +39,7 @@ export function createShangSheSearchHTML(prefix: string, placeholder: string, in
         data-action="filterShangSheList" data-prefix="${prefix}" autocomplete="off"
         value="${escapeHTML(inputValue || '')}">
       <input type="hidden" id="${prefix}-shangshe-selected-id" value="${escapeHTML(hiddenValue || '')}">
-      <div id="${prefix}-shangshe-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:240px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,0.3);"></div>
+      <div id="${prefix}-shangshe-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:2px;max-height:240px;overflow-y:auto;background:var(--surface);border:1px solid var(--border);border-radius:6px;z-index:200;box-shadow:var(--shadow-pop);"></div>
     </div>`;
 }
 

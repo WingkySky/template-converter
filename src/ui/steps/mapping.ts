@@ -86,7 +86,7 @@ export function showMappingStep(): void {
       <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('table', 14)} <strong style="color:var(--accent2);">${dataRows.length}</strong> 行有效数据</div>
       <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('list', 14)} 识别 <strong style="color:var(--accent2);">${colIndices.length}</strong> 列</div>
       ${headerRowIndex>0?`<div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('arrowLeft', 12)} 跳过前 ${headerRowIndex} 行</div>`:''}
-      ${filteredCount>0?`<div style="background:var(--orange-soft);border:1px solid rgba(150,105,15,0.25);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('filter', 14)} 已自动过滤 <strong>${filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
+      ${filteredCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('filter', 14)} 已自动过滤 <strong>${filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
     </div>
     <div style="font-size:14px;font-weight:600;margin-bottom:10px;">${icon('list', 14)} 列映射 — 请确认或修改</div>
     <div class="mapping-grid">${colsHTML}</div>

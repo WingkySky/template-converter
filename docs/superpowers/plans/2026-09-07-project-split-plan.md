@@ -3,6 +3,7 @@
 - 日期：2026-09-07
 - 依据：[2026-09-07-project-split-design.md](../specs/2026-09-07-project-split-design.md)（v2，TS 全量）
 - 执行方式：主智能体负责串行主干（脚手架、legacy.js/index.html/main.ts 收口、集成验证），阶段 1/3 以**文件所有权分区**并行派发子智能体
+- 状态：✅ 全部完成（2026-09-07）。提交轨迹：ee71d97(0) → e4b9e46(1A) → ad03ef5(1B/C) → e1f5884(2) → 50c561d(3pre) → a35eea0(3) → c6667ee(4)。旧 template-converter.html 待阶段 5 删除
 
 ## 执行策略：多智能体分区并行
 

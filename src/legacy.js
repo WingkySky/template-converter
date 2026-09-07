@@ -1,5 +1,20 @@
 // @ts-nocheck
 // 过渡文件：template-converter.html <script> 段的逐字拷贝（阶段 1-3 逐步抽空，阶段 5 删除）
+
+// ==================== 阶段 1A：core/parser / mapping / clean 已抽取 ====================
+// 函数实现移至 src/core/*，此处仅 import 以保持 legacy 内部调用与 window 测试面不变。
+import { parseCSV, isGarbled } from './core/parser/parse-csv';
+import { buildSourceItem } from './core/parser/source-item';
+import { analyzeWorkbookSheets, analyzeSheet } from './core/parser/excel';
+import {
+  SUMMARY_RE, SUMMARY_TERMS_EXACT, FEE_LABEL_RE, isHeaderContinuation,
+  mergeHeaderRows, smartDetectTable, isSummaryLikeRow, hasIdentityField,
+  inferGenderFromIdCard,
+} from './core/parser/table-detect';
+import { isAmountLikeNumber, getAmountColumnScore } from './core/mapping/amount-score';
+import { COL_KEYWORDS, COL_TYPE_LABELS, detectColumnMapping } from './core/mapping/column-detect';
+import { sanitizeAmount, cleanValue } from './core/clean/values';
+
 // ==================== State ====================
 const DEFAULT_PREVIEW_ROW_LIMIT = 8;
 const PREVIEW_ROW_INCREMENT = 20;
@@ -1214,36 +1229,7 @@ function generateTaskListSheet(kb) {
 updateKBStatus();
 
 // ==================== Column Keywords ====================
-const COL_KEYWORDS = {
-  name:       /姓名|户名|名称|人员|收款人|员工|name|person/i,
-  idCard:     /身份证|身份证号|身份证号码|id\s*card|idcard|证件号/i,
-  phone:      /电话|phone|手机|mobile|联系电话/i,
-  bankName:   /开户行|开户银行|银行名称|bank\s*name/i,
-  bankCard:   /银行|bank|卡号|bankcard|账号|账户|个人银行卡号/i,
-  amount:     /金额|amount|收入|income|报酬|pay|税前金额|税前收入|税后收入|应发金额|实发金额|计划发放收入|发放金额|付款金额|应发金额\(含税\)|应发金额（含税）/i,
-  gender:     /性别|gender|sex/i,
-  location:   /开户地|开户所属地|银行所属地|税源地/i,
-  note:       /备注|note|说明|remark/i,
-  shangSheId: /商社编号|商社代码|商户编号/i,
-  clientName: /客户名称|公司名称|委托方名称?|甲方名称?/i,
-  taxId: /纳税人识别号|统一信用代码|统一社会信用代码|税号|信用代码/i,
-};
 
-const COL_TYPE_LABELS = {
-  '':         '— 不识别 —',
-  name:       '👤 姓名',
-  idCard:     '🪪 身份证',
-  phone:      '📱 手机号',
-  bankName:   '🏦 开户银行',
-  bankCard:   '💳 银行卡号',
-  amount:     '💰 税前金额',
-  gender:     '⚧ 性别',
-  location:   '📍 开户地/税源地',
-  note:       '📝 备注',
-  shangSheId: '🏢 商社编号',
-  clientName: '🏢 客户名称',
-  taxId: '🪪 纳税人识别号',
-};
 
 // ==================== Target Templates ====================
 const TEMPLATES = {
@@ -1341,12 +1327,6 @@ function onFileParsed() {
   }
 }
 
-function buildSourceItem({ type, fileName, sheetName = '', rows = [], selected = true, analysis = null }) {
-  return {
-    id: `${type}:${fileName}:${sheetName || 'default'}:${Math.random().toString(36).slice(2, 8)}`,
-    type, fileName, sheetName, rows, selected, analysis
-  };
-}
 
 function updateAccumIndicator() {
   const el = document.getElementById('accum-indicator');
@@ -1366,276 +1346,18 @@ function countSelectedRows() {
 }
 
 // ==================== CSV ====================
-function parseCSV(text) {
-  const rows = [];
-  let row = [];
-  let cell = '';
-  let inQuotes = false;
-  let i = 0;
 
-  while (i < text.length) {
-    const ch = text[i];
-
-    if (inQuotes) {
-      if (ch === '"') {
-        // 检查是否为转义双引号 ""
-        if (i + 1 < text.length && text[i + 1] === '"') {
-          cell += '"';
-          i += 2;
-        } else {
-          // 结束引号
-          inQuotes = false;
-          i++;
-        }
-      } else {
-        cell += ch;
-        i++;
-      }
-    } else {
-      if (ch === '"') {
-        inQuotes = true;
-        i++;
-      } else if (ch === ',') {
-        row.push(cell);
-        cell = '';
-        i++;
-      } else if (ch === '\r') {
-        // 处理 \r\n 或 \r
-        row.push(cell);
-        cell = '';
-        rows.push(row);
-        row = [];
-        i++;
-        if (i < text.length && text[i] === '\n') i++;
-      } else if (ch === '\n') {
-        row.push(cell);
-        cell = '';
-        rows.push(row);
-        row = [];
-        i++;
-      } else {
-        cell += ch;
-        i++;
-      }
-    }
-  }
-
-  // 处理最后一行（无换行结尾）
-  if (cell !== '' || row.length > 0) {
-    row.push(cell);
-    rows.push(row);
-  }
-
-  // 过滤空行
-  return rows.filter(row => row.some(cell => cell !== ''));
-}
-
-function isGarbled(text) {
-  if (/[\uFFFD]{2,}/.test(text)) return true;
-  let s = 0;
-  for (let i = 0; i < Math.min(text.length, 500); i++) {
-    const c = text.charCodeAt(i);
-    if (c > 255 && !(c >= 0x4E00 && c <= 0x9FFF) && !(c >= 0x3000 && c <= 0x303F)) s++;
-  }
-  return s > 10;
-}
 
 // ==================== Excel Analysis ====================
-function analyzeWorkbookSheets(wb, fileName) {
-  let monthHint = '', yearHint = '';
-  for (const sn of wb.SheetNames) {
-    const ws = wb.Sheets[sn];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }).slice(0, 20);
-    for (const row of rows) {
-      for (const cell of row || []) {
-        const t = String(cell || '').trim();
-        if (!t) continue;
-        if (!yearHint) { const m = t.match(/(20\d{2})/); if (m) yearHint = m[1]; }
-        if (!monthHint) {
-          const m2 = t.match(/(?:^|[^\d])(20\d{2}\s*年\s*\d{1,2}\s*月)/) || t.match(/(?:^|[^\d])(20\d{2}[-\/.]\d{1,2})/);
-          if (m2) monthHint = m2[1];
-        }
-      }
-    }
-  }
 
-  const analyzed = wb.SheetNames.map(sn => {
-    const ws = wb.Sheets[sn];
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
-    return analyzeSheet(sn, rows, monthHint, yearHint);
-  }).filter(item => item.rows.length > 0);
-
-  if (!analyzed.length) return [];
-  analyzed.sort((a, b) => b.score - a.score);
-  const topScore = analyzed[0].score;
-  let selected = analyzed.filter(item =>
-    item.score >= 30 && item.dataRowsCount >= 1 && item.score >= topScore - 15 &&
-    !/(汇总|总表|说明|模板|图表|透视|summary|chart|cover|封面|配置表|任务清单)/i.test(item.sheetName)
-  );
-  if (!selected.length) selected = [analyzed[0]];
-  const selNames = new Set(selected.map(item => item.sheetName));
-
-  return analyzed.map(item => buildSourceItem({
-    type: 'excel-sheet', fileName, sheetName: item.sheetName,
-    rows: item.rows, selected: selNames.has(item.sheetName), analysis: item
-  }));
-}
-
-function analyzeSheet(sheetName, rows, monthHint, yearHint) {
-  const nonEmpty = (rows || []).filter(row => row.some(cell => String(cell || '').trim() !== ''));
-  if (!nonEmpty.length) return { sheetName, rows: [], score: -999, dataRowsCount: 0, headerRowIndex: 0, autoMap: { cols: {} } };
-
-  const { headerRow, headerRowIndex, dataRows, filteredCount } = smartDetectTable(nonEmpty);
-  const autoMap = detectColumnMapping(headerRow, dataRows);
-
-  let headerScore = 0;
-  Object.values(autoMap.cols || {}).forEach(col => {
-    if (col.type === 'amount') headerScore += 25;
-    else if (col.type === 'name') headerScore += 20;
-    else if (col.type) headerScore += 10;
-  });
-
-  const reverseMap = {};
-  Object.entries(autoMap.cols || {}).forEach(([ci, col]) => {
-    if (col.type && reverseMap[col.type] == null) reverseMap[col.type] = Number(ci);
-  });
-  autoMap.amountCol = reverseMap.amount;
-  autoMap.nameCol = reverseMap.name;
-
-  let dataScore = 0;
-  const sample = dataRows.slice(0, 50);
-  if (sample.length >= 3) dataScore += 8;
-  let amtHits = 0, idHits = 0;
-  sample.forEach(row => {
-    if (autoMap.amountCol != null && isAmountLikeNumber(row?.[autoMap.amountCol])) amtHits++;
-    if (autoMap.nameCol != null && String(row?.[autoMap.nameCol] || '').trim()) idHits++;
-  });
-  dataScore += Math.round((amtHits / Math.max(sample.length, 1)) * 18);
-  dataScore += Math.round((idHits / Math.max(sample.length, 1)) * 12);
-
-  let nameScore = 0;
-  if (/(费用明细|工资|报酬|劳务|发放|明细)/i.test(sheetName)) nameScore += 8;
-  if (/(汇总|总表|配置|任务)/i.test(sheetName)) nameScore -= 12;
-
-  return {
-    sheetName, rows: nonEmpty, score: headerScore + dataScore + nameScore,
-    dataRowsCount: dataRows.length, headerRowIndex, autoMap, filteredCount: filteredCount || 0
-  };
-}
 
 // ==================== Smart Table Detection (IMPROVED) ====================
-const SUMMARY_RE = /合计|总计|汇总|小计|平台服务费|服务费率|平台费率|合计支付|开票金额|收费通知/i;
 
 // 检测下一行是否是表头延续（双行表头的第二行）
-function isHeaderContinuation(headerRow, nextRow) {
-  if (!nextRow || !Array.isArray(nextRow)) return false;
-  const nextNonEmpty = nextRow.filter(c => c != null && String(c).trim() !== '');
-  if (nextNonEmpty.length === 0) return false;
-  // 双行表头的第二行通常只有少数拆分的列，不超过表头列数的一半
-  if (nextNonEmpty.length > Math.max(3, headerRow.length * 0.5)) return false;
-  // 所有非空单元格必须是短文本，不能是数字、身份证号、手机号、银行卡号等数据值
-  for (const c of nextNonEmpty) {
-    const s = String(c).trim();
-    if (!s) continue;
-    if (/^\d+(\.\d+)?$/.test(s)) return false;       // 纯数字
-    if (/^\d{17}[\dXx]$/.test(s)) return false;       // 身份证号
-    if (/^1[3-9]\d{9}$/.test(s)) return false;        // 手机号
-    if (/^\d{16,19}$/.test(s)) return false;          // 银行卡号
-    if (s.length > 10) return false;                  // 表头文本通常较短
-  }
-  return true;
-}
 
 // 合并双行表头：对于每一列，若两行都有值则拼接，否则取非空值
-function mergeHeaderRows(row1, row2) {
-  const len = Math.max(row1.length, row2.length);
-  const merged = [];
-  for (let i = 0; i < len; i++) {
-    const h1 = String(row1[i] || '').trim();
-    const h2 = String(row2[i] || '').trim();
-    if (h1 && h2) merged.push(h1 + h2);
-    else merged.push(h1 || h2);
-  }
-  return merged;
-}
 
-function smartDetectTable(rows) {
-  const HEADER_RE = /月份|month|收入|income|金额|amount|姓名|name|身份证|电话|phone|手机|银行|bank|卡号|性别|gender|开户|账号|备注|note|出错|平台|商社|任务|税源|工种|付款|收款|商户|订单|发放|应发|实发|户名/i;
-  let bestIdx = 0, bestScore = 0;
-  const scanEnd = Math.min(rows.length, 30);
 
-  for (let i = 0; i < scanEnd; i++) {
-    const row = rows[i] || [];
-    let score = 0;
-    row.forEach(cell => {
-      const v = String(cell || '');
-      if (!v.trim()) return;
-      Object.values(COL_KEYWORDS).forEach(re => { if (re.test(v)) score++; });
-      if (/序号|编号|^#$/.test(v)) score += 0.5;
-    });
-    if (score > bestScore) { bestScore = score; bestIdx = i; }
-  }
-
-  let headerRow = rows[bestIdx] || [];
-  let dataStartIdx = bestIdx + 1;
-  // 检测双行表头：若下一行是表头延续，则合并两行作为完整表头
-  const nextRow = rows[bestIdx + 1];
-  if (isHeaderContinuation(headerRow, nextRow)) {
-    headerRow = mergeHeaderRows(headerRow, nextRow);
-    dataStartIdx = bestIdx + 2;
-  }
-
-  const dataRows = [];
-  let filteredNonPerson = 0;   // 被判定为非人员/单位记录而过滤掉的行数（如平台服务费、合计等）
-  for (let i = dataStartIdx; i < rows.length; i++) {
-    const row = rows[i] || [];
-    // Skip empty rows
-    const nonEmptyCells = row.filter(c => c != null && String(c).trim() !== '');
-    if (nonEmptyCells.length === 0) continue;
-    // Skip summary rows (check ALL cells)
-    if (isSummaryLikeRow(row)) continue;
-    // Skip rows that look like secondary headers: most cells are short header-like keywords
-    // A true secondary header has >50% of non-empty cells matching header keywords AND each is short (<=8 chars)
-    const kwCells = row.filter(cell => {
-      const s = String(cell || '').trim();
-      return s && HEADER_RE.test(s) && s.length <= 8;
-    });
-    // Only skip if keyword cells dominate the non-empty cells (>60%) AND there are at least 3
-    if (kwCells.length >= 3 && kwCells.length >= nonEmptyCells.length * 0.6) continue;
-    // 多重校验：只保留真正是人员/单位发放数据的记录
-    if (!hasIdentityField(row, headerRow)) { filteredNonPerson++; continue; }
-    dataRows.push(row);
-  }
-  return { headerRow, headerRowIndex: bestIdx, dataRows, filteredCount: filteredNonPerson };
-}
-
-function isSummaryLikeRow(row) {
-  if (!Array.isArray(row)) return false;
-  // True summary rows usually have the summary keyword in the FIRST non-empty cell
-  // (like starting with "合计", "总计", "小计" in the first/label column)
-  // AND typically have a large number in the amount column.
-  // We don't want to skip rows just because a note/remark cell happens to contain "合计".
-
-  // Find first non-empty cell
-  let firstNonEmpty = '';
-  for (const cell of row) {
-    const s = String(cell || '').trim();
-    if (s) {
-      firstNonEmpty = s;
-      break;
-    }
-  }
-  if (!firstNonEmpty) return false;
-
-  // If the row starts with a strong summary keyword, it IS a summary row
-  const STRONG_SUMMARY_RE = /^(合计|总计|汇总|小计|累计)/;
-  if (STRONG_SUMMARY_RE.test(firstNonEmpty)) return true;
-
-  // Also check if the first cell IS exactly "合计" etc (exact match)
-  if (/^(合计|总计|汇总|小计|累计)$/.test(firstNonEmpty)) return true;
-
-  return false;
-}
 
 /**
  * Check if a row contains at least one identity field.
@@ -1643,16 +1365,9 @@ function isSummaryLikeRow(row) {
  * phone (11 digits starting with 1), bank card (16-19 digits), sequence number,
  * or valid amount (strong signal this is a data row).
  */
-const SUMMARY_TERMS_EXACT = new Set([
-  '累计', '总计', '合计', '小计', '收入', '金额', '税率', '费率', '支付', '平台',
-  '到手', '服务', '保险', '备注', '说明', '税源', '工种', '任务', '性别', '开户',
-  '发放', '实发', '应发', '个税', '序号', '编号', '姓名', '身份证', '电话', '手机',
-  '银行', '卡号', '账号', '户名', '备注', '说明'
-]);
 
 // 费用/汇总类标签：这些文本明显不是人员姓名，出现时应判定为非人员记录
 // （例如"平台服务费""额外服务费""服务费""手续费""小计""合计"等）
-const FEE_LABEL_RE = /费|平台|服务|合计|小计|总计|汇总|累计|税率|税点|费率|金额|账号|银行|开户|手机|电话|性别|备注|说明|序号|编号|开票|支付|社保|公积金|保险|个税|报酬|收入|商户|订单/;
 
 /**
  * 判断一行是否为"真正的人员/单位发放记录"。
@@ -1668,135 +1383,15 @@ const FEE_LABEL_RE = /费|平台|服务|合计|小计|总计|汇总|累计|税�
  *
  * 只要该行包含费用/汇总标签（如"平台服务费"），且没有任何强身份标识，则判定为非人员记录。
  */
-function hasIdentityField(row, headerRow) {
-  let strongCount = 0;   // 强身份标识数量
-  let nameLike = false;  // 拟似姓名
-  let hasAmount = false;
-  let nonEmptyCount = 0;
-
-  for (let ci = 0; ci < row.length; ci++) {
-    const cell = row[ci];
-    const s = String(cell || '').trim();
-    if (!s) continue;
-    nonEmptyCount++;
-
-    // —— 强身份标识：明确对应某个具体发放对象 ——
-    if (/^\d{17}[\dXx]$/.test(s)) { strongCount++; continue; }        // 身份证
-    if (/^[0-9A-Za-z]{18}$/.test(s)) { strongCount++; continue; }     // 统一社会信用代码
-    if (/^1[3-9]\d{9}$/.test(s)) { strongCount++; continue; }         // 手机号
-    if (/^\d{16,19}$/.test(s)) { strongCount++; continue; }           // 银行卡号
-
-    // —— 费用/汇总标签：明确不是人员姓名，跳过（不计入姓名）——
-    if (FEE_LABEL_RE.test(s)) continue;
-
-    // —— 拟似姓名：2-15 个中文字符（支持少数民族 ·）——
-    if (/^[\u4e00-\u9fff·]{2,15}$/.test(s)) {
-      // 检查该列是否为地点/类型等非姓名列，避免将"天津"等地名误判为人名
-      const header = String(headerRow?.[ci] || '').trim();
-      if (/开户地|税源地|地址|地区|区域|城市|类型|方式|项目/.test(header)) continue;
-      nameLike = true;
-      continue;
-    }
-
-    // —— 金额：作为兜底判定依据 ——
-    if (isAmountLikeNumber(s)) hasAmount = true;
-  }
-
-  // 多重校验结论
-  if (strongCount >= 1) return true;                            // 含强身份标识 → 人员/单位记录
-  if (nameLike && hasAmount && nonEmptyCount >= 3) return true; // 姓名 + 金额 + 足够列 → 兜底
-  return false;
-}
 
 /**
  * Infer gender from Chinese 18-digit ID card number.
  * The 17th digit: odd = male (男), even = female (女).
  * Returns '男' or '女' or '' if not applicable.
  */
-function inferGenderFromIdCard(idCard) {
-  if (!idCard) return '';
-  const s = String(idCard).trim();
-  if (/^\d{17}[\dXx]$/.test(s)) {
-    const digit = parseInt(s[16]);
-    return digit % 2 === 1 ? '男' : '女';
-  }
-  return '';
-}
 
-function detectColumnMapping(headerRow, dataRows) {
-  const mapping = {};
-  const used = new Set();
 
-  headerRow.forEach((cell, i) => {
-    const v = String(cell || '').trim();
-    if (!v) return;
-    for (const [type, re] of Object.entries(COL_KEYWORDS)) {
-      if (type === 'amount') continue;
-      if (!used.has(type) && re.test(v)) { mapping[i] = type; used.add(type); break; }
-    }
-  });
 
-  let bestIdx = null, bestScore = -Infinity;
-  headerRow.forEach((cell, i) => {
-    if (mapping[i]) return;
-    const s = getAmountColumnScore(cell, dataRows, i);
-    if (s > bestScore) { bestScore = s; bestIdx = i; }
-  });
-  if (bestIdx != null && bestScore >= 5) { mapping[bestIdx] = 'amount'; used.add('amount'); }
-
-  if (!used.has('amount')) {
-    for (let ci = 0; ci < headerRow.length; ci++) {
-      if (mapping[ci]) continue;
-      let n = 0;
-      for (let ri = 0; ri < Math.min(dataRows.length, 10); ri++) {
-        if (isAmountLikeNumber(dataRows[ri]?.[ci])) n++;
-      }
-      if (n >= Math.min(dataRows.length, 10) * 0.5) { mapping[ci] = 'amount'; used.add('amount'); break; }
-    }
-  }
-
-  const cols = {};
-  headerRow.forEach((cell, i) => {
-    const v = String(cell || '').trim();
-    if (!v && mapping[i] == null) return;
-    const samples = [];
-    for (let ri = 0; ri < Math.min(dataRows.length, 3); ri++) {
-      const sv = dataRows[ri]?.[i];
-      if (sv != null && String(sv).trim()) samples.push(String(sv).trim());
-    }
-    cols[i] = { header: v || `列${i+1}`, type: mapping[i] || '', samples };
-  });
-  return { cols };
-}
-
-function getAmountColumnScore(header, dataRows, ci) {
-  const h = String(header || '').trim();
-  if (!h || /序号|编号|方式|类型|选择|状态|税源地|开户|账号|账户|手机号|电话|身份证|证件|银行|备注|说明|业务|减除|扣除|速算|核定|预扣|免税|服务费|个税/.test(h)) return -Infinity;
-  let score = 0;
-  if (/税前金额|税前收入/i.test(h)) score += 12;
-  else if (/计划发放收入|应发金额|实发金额|客户支付合计|付款金额|应发金额/i.test(h)) score += 9;
-  else if (/金额|amount|收入额|合计金额|应付金额/i.test(h)) score += 6;
-  const sample = dataRows.slice(0, 12);
-  if (!sample.length) return score;
-  let hits = 0;
-  sample.forEach(row => { if (isAmountLikeNumber(row?.[ci])) hits++; });
-  const ratio = hits / sample.length;
-  score += ratio * 8;
-  // 仅在无关键词命中时才施加低命中率惩罚
-  // （低命中率通常因数据行质量差导致，表头关键词是更可靠的信号）
-  if (ratio < 0.35 && score < 6) score -= 8;
-  return score;
-}
-
-function isAmountLikeNumber(value) {
-  const raw = String(value == null ? '' : value).trim();
-  if (!raw) return false;
-  // 剥离货币符号（货币格式单元格经 raw:false 读取后形如 "¥90,100.00"）
-  const compact = raw.replace(/[¥￥$€£,，\s]/g, '').replace(/(元|人民币)$/,'');
-  if (/^\d{11}$/.test(compact) || /^\d{16,19}$/.test(compact) || /^\d{17}[\dXx]$/.test(compact)) return false;
-  const num = parseFloat(compact);
-  return !isNaN(num) && isFinite(num) && num > 0 && num < 1e8;
-}
 
 // ==================== Mapping Step ====================
 function showMappingStep() {
@@ -2306,12 +1901,6 @@ function genCustom() {
   showExportStep();
 }
 
-function sanitizeAmount(val) {
-  if (val == null) return '';
-  // raw:false 读取时货币格式的单元格会带 ¥/$ 等符号（如 "¥90,100.00"），需先剥离再解析
-  const n = parseFloat(String(val).trim().replace(/[¥￥$€£,，\s]/g, '').replace(/(元|人民币)$/,''));
-  return isNaN(n) ? '' : String(Math.round(n * 100) / 100);
-}
 
 // ==================== Data Preprocessing (Space/Whitespace Cleaning) ====================
 /**
@@ -2320,29 +1909,6 @@ function sanitizeAmount(val) {
  * for sensitive fields that should never contain spaces: name, idCard, phone, bankCard.
  * Also normalizes common full-width digits/letters to half-width.
  */
-function cleanValue(val, type) {
-  if (val == null) return '';
-  let s = String(val);
-  if (!s.trim()) return '';
-  // Only clean specific field types that should never have spaces
-  const SPACE_CLEAN_TYPES = new Set(['name', 'idCard', 'phone', 'bankCard']);
-  if (SPACE_CLEAN_TYPES.has(type)) {
-    // Remove ALL whitespace: regular spaces, tabs, non-breaking spaces (\u00A0),
-    // full-width spaces (\u3000), zero-width chars, etc.
-    s = s.replace(/[\s\u00A0\u3000\u200B\u200C\u200D\uFEFF]/g, '');
-    // Normalize full-width digits (０-９) → half-width (0-9)
-    s = s.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
-    // Normalize full-width letters (Ａ-Ｚ, ａ-ｚ) → half-width (A-Z, a-z)
-    s = s.replace(/[Ａ-Ｚａ-ｚ]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
-    // 身份证末位校验码归一化：X 的形近字符（罗马数字 Ⅹ/ⅹ、西里尔字母 Х/х）→ X，
-    // 小写 x 统一转大写（客户数据常见非标准写法导致平台导入失败）
-    if (type === 'idCard') {
-      s = s.replace(/[\u2169\u2179\u0425\u0445]/g, 'X');
-      s = s.replace(/^(\d{17})[xX]$/, '$1X');
-    }
-  }
-  return s;
-}
 
 function escapeHTML(value) {
   return String(value ?? '')

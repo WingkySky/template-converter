@@ -9,13 +9,21 @@
 <body>
 
 <div class="container">
-  <h1>🔄 灵工发放模版转换工具</h1>
+  <header class="app-header">
+    <div class="seal">转</div>
+    <div class="app-title">灵工发放模版转换工具<span class="en">GIG PAYROLL TEMPLATE CONVERTER</span></div>
+    <div class="meta">
+      <div>LOCAL · PURE FRONTEND</div>
+      <div>XLSX / CSV → 4 TEMPLATES</div>
+    </div>
+  </header>
   <p class="subtitle">上传样例文件，智能识别数据列，一键转换为不同平台的导入模版</p>
 
   <!-- 知识库管理卡片 -->
   <div class="card" id="step-kb">
     <div class="card-title">
-      <span class="icon" style="background:rgba(253,203,110,0.15);">📚</span>
+      <span class="step-no">00</span>
+      <span class="icon" data-icon="book"></span>
       知识库管理
     </div>
     <div id="kb-status-area" class="kb-status-grid">
@@ -23,33 +31,34 @@
       <div class="kb-stat"><div><div class="num">0</div><div class="label">任务数量</div></div></div>
       <div class="kb-stat"><div><div class="num" style="font-size:13px;">未加载</div><div class="label">最后更新</div></div></div>
     </div>
-    <div style="margin-bottom:14px;padding:12px 16px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);font-size:13px;color:var(--text2);line-height:1.8;">
-      <div style="font-weight:600;color:var(--text);margin-bottom:4px;">📋 知识库文件格式要求</div>
+    <div class="kb-hint">
+      <div class="kb-hint-title">知识库文件格式要求</div>
       上传 Excel 文件（.xlsx/.xls），第一行为表头，需包含以下10列：<br>
-      <span style="color:var(--accent2);">商社编号 | 商社简称 | 商社全称 | 一级业务类型 | 二级业务类型 | 纳税人识别号 | 签约费率 | 签约主体 | 任务名称 | 服务内容</span><br>
-      其中<span style="color:var(--orange);">商社编号、签约主体、任务名称</span>为自动填充关键字段。<span style="color:var(--text2);">签约费率仅用于未来收款计算，当前不参与模板填充。</span>同一商社可有多行（不同任务），系统会按商社编号自动合并。
+      <span class="fields">商社编号 ｜ 商社简称 ｜ 商社全称 ｜ 一级业务类型 ｜ 二级业务类型 ｜ 纳税人识别号 ｜ 签约费率 ｜ 签约主体 ｜ 任务名称 ｜ 服务内容</span><br>
+      其中<span style="color:var(--accent);font-weight:600;">商社编号、签约主体、任务名称</span>为自动填充关键字段。<span style="color:var(--text3);">签约费率仅用于未来收款计算，当前不参与模板填充。</span>同一商社可有多行（不同任务），系统会按商社编号自动合并。
     </div>
     <div class="kb-btn-row">
-      <button class="btn btn-primary" onclick="document.getElementById('kb-upload-input').click()">📤 上传知识库</button>
+      <button class="btn btn-primary" id="kb-btn-upload">上传知识库</button>
       <input type="file" id="kb-upload-input" accept=".xlsx,.xls" style="display:none;">
-      <button class="btn btn-orange btn-sm">📄 下载样例文件</button>
-      <button class="btn btn-secondary btn-sm" onclick="document.getElementById('kb-config-upload-input').click()">🔄 更新配置数据</button>
+      <button class="btn btn-orange btn-sm" id="kb-btn-sample">下载样例文件</button>
+      <button class="btn btn-secondary btn-sm" id="kb-btn-config">更新配置数据</button>
       <input type="file" id="kb-config-upload-input" accept=".xlsx,.xls" style="display:none;">
-      <button class="btn btn-secondary">💾 导出备份</button>
-      <button class="btn btn-secondary" onclick="document.getElementById('kb-import-input').click()">📥 导入备份</button>
+      <button class="btn btn-secondary" id="kb-btn-export">导出备份</button>
+      <button class="btn btn-secondary" id="kb-btn-import">导入备份</button>
       <input type="file" id="kb-import-input" accept=".xlsx,.xls,.json" style="display:none;">
-      <button class="btn btn-red btn-sm">🗑️ 清空知识库</button>
+      <button class="btn btn-red btn-sm" id="kb-btn-clear">清空知识库</button>
     </div>
   </div>
 
   <div class="card" id="step-upload">
     <div class="card-title">
-      <span class="icon" style="background:rgba(108,92,231,0.15);">📁</span>
-      第一步：上传样例文件
+      <span class="step-no">01</span>
+      <span class="icon" data-icon="folder"></span>
+      上传样例文件
     </div>
     <div class="upload-area" id="upload-area">
       <input type="file" id="file-input" accept=".csv,.xlsx,.xls" multiple>
-      <div class="icon">📤</div>
+      <div class="icon" data-icon="upload" data-size="34"></div>
       <div class="title">点击或拖拽上传 CSV / Excel 文件</div>
       <div class="desc">
         支持同时上传多个文件，系统会智能识别数据表<br>
@@ -61,27 +70,31 @@
 
   <div class="card hidden" id="step-mapping">
     <div class="card-title">
-      <span class="icon" style="background:rgba(116,185,255,0.15);">🔍</span>
-      第二步：确认列映射
+      <span class="step-no">02</span>
+      <span class="icon" data-icon="search"></span>
+      确认列映射
     </div>
     <div id="mapping-content"></div>
   </div>
 
   <div class="card hidden" id="step-template">
     <div class="card-title">
-      <span class="icon" style="background:rgba(0,184,148,0.15);">🎯</span>
-      第三步：选择目标模版
+      <span class="step-no">03</span>
+      <span class="icon" data-icon="target"></span>
+      选择目标模版
     </div>
     <div id="template-content"></div>
   </div>
 
   <div class="card hidden" id="step-export">
     <div class="card-title">
-      <span class="icon" style="background:rgba(253,203,110,0.15);">📊</span>
-      第四步：预览 & 导出
+      <span class="step-no">04</span>
+      <span class="icon" data-icon="table"></span>
+      预览 &amp; 导出
     </div>
     <div id="export-content"></div>
   </div>
 </div>
+
 </body>
 </html>

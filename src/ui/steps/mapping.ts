@@ -2,6 +2,7 @@
 // 动态 HTML 的内联 onchange/onclick → data-action + initMappingDelegates() 事件委托
 // （change 与 click 两个事件类型都挂在 #mapping-content 容器上，容器本身不随渲染重建）。
 import { escapeHTML, byId, delegateAction } from '../dom';
+import { icon } from '../icons';
 import { state } from '../../state';
 import type { SourceDataEntry } from '../../state';
 import { smartDetectTable } from '../../core/parser/table-detect';
@@ -22,7 +23,7 @@ export function showMappingStep(): void {
       const desc = item.type === 'excel-sheet' ? `${item.fileName} / ${item.sheetName}` : item.fileName;
       const isP = item.id === state.previewSourceId;
       return `
-        <div style="padding:10px;border:1px solid ${isP?'var(--blue)':(item.selected?'var(--accent)':'var(--border)')};border-radius:8px;background:${isP?'rgba(116,185,255,0.08)':(item.selected?'rgba(108,92,231,0.08)':'var(--surface2)')};">
+        <div style="padding:10px;border:1px solid ${isP?'var(--accent)':(item.selected?'var(--border-strong)':'var(--border)')};border-radius:8px;background:${isP?'var(--accent-soft)':(item.selected?'var(--surface)':'var(--surface2)')};">
           <div style="display:flex;gap:10px;align-items:flex-start;">
             <input type="checkbox" ${item.selected?'checked':''} data-action="toggleSrc" data-id="${escapeHTML(item.id)}" style="margin-top:2px;accent-color:var(--accent);">
             <div style="flex:1;min-width:0;">
@@ -34,7 +35,7 @@ export function showMappingStep(): void {
         </div>`;
     }).join('');
     sourceHTML = `<div style="background:var(--surface2);border-radius:8px;padding:14px;border:1px solid var(--border);margin-bottom:16px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:10px;">🗂️ 数据源</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px;">${icon('folder', 14)} 数据源</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;">${cards}</div>
     </div>`;
   }
@@ -42,7 +43,7 @@ export function showMappingStep(): void {
   if (!sel.length) {
     container.innerHTML = `
       ${sourceHTML}
-      <div class="status-msg error">⚠️ 请至少勾选一个数据表以继续列映射</div>`;
+      <div class="status-msg error">${icon('alert', 14)} 请至少勾选一个数据表以继续列映射</div>`;
     return;
   }
 
@@ -82,15 +83,15 @@ export function showMappingStep(): void {
   container.innerHTML = `
     ${sourceHTML}
     <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
-      <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">📊 <strong style="color:var(--accent2);">${dataRows.length}</strong> 行有效数据</div>
-      <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">📋 识别 <strong style="color:var(--accent2);">${colIndices.length}</strong> 列</div>
-      ${headerRowIndex>0?`<div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">⏭️ 跳过前 ${headerRowIndex} 行</div>`:''}
-      ${filteredCount>0?`<div style="background:rgba(253,203,110,0.12);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">🛡️ 已自动过滤 <strong>${filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
+      <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('table', 14)} <strong style="color:var(--accent2);">${dataRows.length}</strong> 行有效数据</div>
+      <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('list', 14)} 识别 <strong style="color:var(--accent2);">${colIndices.length}</strong> 列</div>
+      ${headerRowIndex>0?`<div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('arrowLeft', 12)} 跳过前 ${headerRowIndex} 行</div>`:''}
+      ${filteredCount>0?`<div style="background:var(--orange-soft);border:1px solid rgba(150,105,15,0.25);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('filter', 14)} 已自动过滤 <strong>${filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
     </div>
-    <div style="font-size:14px;font-weight:600;margin-bottom:10px;">📋 列映射 — 请确认或修改</div>
+    <div style="font-size:14px;font-weight:600;margin-bottom:10px;">${icon('list', 14)} 列映射 — 请确认或修改</div>
     <div class="mapping-grid">${colsHTML}</div>
     <div style="margin-bottom:12px;">
-      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px;">📋 数据预览</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px;">${icon('table', 13)} 数据预览</div>
       <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;">
         <table class="result-table" style="font-size:12px;">
           <thead><tr>${colIndices.map(ci=>`<th>${escapeHTML(autoMap.cols[ci].header)}</th>`).join('')}</tr></thead>
@@ -99,8 +100,8 @@ export function showMappingStep(): void {
       </div>
     </div>
     <div class="btn-row">
-      <button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="confirmMapping">✅ 确认映射</button>
-      <button class="btn btn-secondary" data-action="resetAll">🔄 重置</button>
+      <button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="confirmMapping">${icon('check', 14)} 确认映射</button>
+      <button class="btn btn-secondary" data-action="resetAll">${icon('refresh', 14)} 重置</button>
     </div>`;
 }
 

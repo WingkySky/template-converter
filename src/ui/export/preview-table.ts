@@ -8,6 +8,7 @@
 // 注：renderPreviewTable 内需要的 allPlatforms/allTaxSources 按原 L1170-1176 的
 // 取数路径（loadKB + getConfigLists/uniqueTaxSources）重算，值与原一致。
 import { state, DEFAULT_PREVIEW_ROW_LIMIT, PREVIEW_ROW_INCREMENT } from '../../state';
+import { icon } from '../icons';
 import { escapeHTML, delegateAction, byId } from '../dom';
 import { getTasksForShangShe } from '../steps/export';
 import { loadKB } from '../../io/kb-storage';
@@ -61,7 +62,7 @@ export function renderPreviewTable(): string {
   const pv = Math.min(rows.length, previewLimit);
   let headHTML = headers.map((h, ci) => {
     const hasFilter = state.columnFilters[ci] && state.columnFilters[ci].size < getColumnUniqueValues(ci).length;
-    return `<th><span>${escapeHTML(h)}</span><button class="col-filter-btn${hasFilter ? ' active' : ''}" title="筛选" data-action="toggleColumnFilter" data-col-idx="${ci}">🔽</button></th>`;
+    return `<th><span>${escapeHTML(h)}</span><button class="col-filter-btn${hasFilter ? ' active' : ''}" title="筛选" data-action="toggleColumnFilter" data-col-idx="${ci}">${icon('chevronDown', 11)}</button></th>`;
   }).join('');
   if (hasNoteColumn) {
     const allVisibleSelected = visiblePreviewRowCount() > 0 && Array.from({ length: visiblePreviewRowCount() }, (_, i) => i).every(i => selectedNoteSet.has(i));

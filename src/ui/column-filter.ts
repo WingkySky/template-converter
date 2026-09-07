@@ -8,6 +8,7 @@
 // 见 dom.ts delegateAction）；applyColumnFilters 中按 onclick 正则识别列号的逻辑
 // 相应改为读 data-action/data-col-idx。其余逐字保真。
 import { state } from '../state';
+import { icon } from './icons';
 import { escapeHTML, delegateAction, byId } from './dom';
 
 export function normalizeSearchText(value: unknown): string {
@@ -190,7 +191,7 @@ export function updateFilterSummary(): void {
     return;
   }
 
-  let html = '<span style="color:var(--text2);">🔍 筛选:</span>';
+  let html = `<span style="color:var(--text2);">${icon('filter', 12)} 筛选:</span>`;
   for (const [colIdxStr, allowedSet] of entries) {
     const ci = parseInt(colIdxStr);
     const colName = headers[ci] || `列${ci+1}`;

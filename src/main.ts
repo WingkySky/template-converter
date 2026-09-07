@@ -1,5 +1,9 @@
 import './style.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource/ibm-plex-mono/600.css';
 import { byId } from './ui/dom';
+import { icon } from './ui/icons';
 import { initKbPanel } from './ui/steps/kb-panel';
 import {
   setResetAllHandler, initUploadArea, initAccumIndicatorDelegate, handleFileInput,
@@ -13,6 +17,11 @@ import {
   getSplitGroups, getSplitGroupCounts, isSplitExportActive, ensureSplitBatches,
   initExportStepDelegates,
 } from './ui/steps/export';
+
+// 静态骨架中的 data-icon 占位符注水为内联 SVG
+document.querySelectorAll<HTMLElement>('[data-icon]').forEach((el) => {
+  el.innerHTML = icon(el.dataset.icon || 'info', Number(el.dataset.size || 16));
+});
 
 // ==================== 装配 ====================
 initKbPanel();

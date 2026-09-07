@@ -2,6 +2,7 @@
 // 动态 HTML 的内联 onclick/onkeydown → data-action + initTemplateDelegates() 事件委托
 // （click 与 keydown 两个事件类型都挂在 #template-content 容器上）。
 import { escapeHTML, byId, delegateAction } from '../dom';
+import { icon } from '../icons';
 import { state } from '../../state';
 import { TEMPLATES } from '../../core/templates/registry';
 
@@ -22,6 +23,11 @@ function invokeGenerateOutput(): void {
   generateOutputHandler?.();
 }
 
+// 模版卡片图标（SVG，替代原 emoji）
+const CARD_ICONS: Record<string, string> = {
+  yidao: 'rocket', shenbianyun: 'cloud', youyi: 'users', custom: 'edit',
+};
+
 export function showTemplateStep(): void {
   const container = byId('template-content');
   byId('step-template').classList.remove('hidden');
@@ -32,7 +38,7 @@ export function showTemplateStep(): void {
     const selected = selectedTemplates.includes(key);
     cardsHTML += `<div class="template-card ${selected?'selected':''}" data-action="selectTemplate" data-key="${key}">
       <input class="multi-check" type="checkbox" ${selected?'checked':''} tabindex="-1">
-      <div class="name">${tpl.icon} ${tpl.name}</div>
+      <div class="name">${icon(CARD_ICONS[key] || 'table', 15)} ${tpl.name}</div>
       <div class="fields">${tpl.desc}</div>
       ${key!=='custom'?`<div style="margin-top:8px;font-size:11px;color:var(--text2);">${escapeHTML(tpl.headers.slice(0,6).join('、'))}${tpl.headers.length>6?'…':''}</div>`:''}
     </div>`;
@@ -54,8 +60,8 @@ export function showTemplateStep(): void {
   container.innerHTML = `<div class="template-grid">${cardsHTML}</div>${customHTML}
     ${selectedTemplates.length > 1 ? `<div class="status-msg info">已选择 ${selectedTemplates.length} 个模版：${selectedTemplates.map(k => TEMPLATES[k].name).join('、')}。下一步先预览 ${TEMPLATES[state.targetTemplate!].name}，导出时可一次导出全部所选模版。</div>` : ''}
     <div class="btn-row">
-      <button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="confirmTemplate" ${!selectedTemplates.length?'disabled':''}>${state.targetTemplate==='custom'?'✅ 映射自定义列':'✅ 生成转换结果'}</button>
-      <button class="btn btn-secondary" data-action="goBack" data-target="step-template">⬅️ 返回</button>
+      <button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="confirmTemplate" ${!selectedTemplates.length?'disabled':''}>${state.targetTemplate==='custom'?`${icon('check', 15)} 映射自定义列`:`${icon('check', 15)} 生成转换结果`}</button>
+      <button class="btn btn-secondary" data-action="goBack" data-target="step-template">${icon('arrowLeft', 14)} 返回</button>
     </div>`;
 }
 

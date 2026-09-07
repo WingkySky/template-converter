@@ -97,7 +97,7 @@ describe('COL_KEYWORDS / COL_TYPE_LABELS 常量', () => {
 
   it('COL_TYPE_LABELS 面向 UI 下拉的标签', () => {
     expect(COL_TYPE_LABELS['']).toBe('— 不识别 —');
-    expect(COL_TYPE_LABELS['amount']).toBe('💰 税前金额');
+    expect(COL_TYPE_LABELS['amount']).toBe('税前金额');
     expect(Object.keys(COL_TYPE_LABELS)).toHaveLength(13);
   });
 });

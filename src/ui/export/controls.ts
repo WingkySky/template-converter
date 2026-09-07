@@ -12,6 +12,7 @@
 // getSplitGroups/getSplitGroupCounts/isSplitExportActive/ensureSplitBatches）经 set/init 注入，
 // 不 import legacy.js、不挂 window。
 import { state, type AppState } from '../../state';
+import { icon } from '../icons';
 import { escapeHTML, delegateAction, byId } from '../dom';
 import {
   updateOutputRow, taxSourceForPlatform, getTasksForShangShe, applyBatchShangShe,
@@ -189,9 +190,9 @@ export function renderExportControls(): string {
   const isYouyi = state.targetTemplate === 'youyi';
   let kbMatchHTML = '';
   if (isYouyi && unmatchedSet.size > 0) {
-    kbMatchHTML = `<div class="status-msg info">⚠️ 知识库匹配：${rows.length - unmatchedSet.size}/${rows.length} 行已匹配，${unmatchedSet.size} 行商社编号未在知识库中找到（橙色高亮行）</div>`;
+    kbMatchHTML = `<div class="status-msg info">${icon('alert', 14)} 知识库匹配：${rows.length - unmatchedSet.size}/${rows.length} 行已匹配，${unmatchedSet.size} 行商社编号未在知识库中找到（橙色高亮行）</div>`;
   } else if (isYouyi && rows.length > 0) {
-    kbMatchHTML = `<div class="status-msg success">✅ 知识库匹配：全部 ${rows.length} 行已成功匹配</div>`;
+    kbMatchHTML = `<div class="status-msg success">${icon('check', 14)} 知识库匹配：全部 ${rows.length} 行已成功匹配</div>`;
   }
 
   // ===== 拆分导出（一源一单）：模式选择 + 每份批次号 =====
@@ -211,7 +212,7 @@ export function renderExportControls(): string {
     const activeGroups = splitActive ? getSplitGroups().length : 0;
     splitModeHTML = `
     <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">📦 导出模式</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${icon('package', 14)} 导出模式</div>
       <div style="display:flex;gap:18px;flex-wrap:wrap;">
         ${radio('merge', '合并为一份', 0)}
         ${radio('byFile', '按文件拆分', splitCounts.byFile)}
@@ -229,7 +230,7 @@ export function renderExportControls(): string {
     state.splitGroupList = groups as unknown as AppState['splitGroupList'];
     splitBatchHTML = `
     <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">🏷️ 每份批次号（拆分模式）</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">${icon('tag', 14)} 每份批次号（拆分模式）</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:6px;">每份已按来源单独检测商社并生成批次号（同一商社多份时自动 -A/-B 区分），可搜索更换商社或直接修改批次号。</div>
       ${groups.map((g, gi) => {
         const b = state.splitBatches[g.key] || {};
@@ -259,14 +260,14 @@ export function renderExportControls(): string {
   let batchNoHTML = '';
   if (supportsBatchNo && !splitActive) {
     const candidateHint = shangSheCandidates.length > 0
-      ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">💡 已根据客户信息缩小范围，找到 ${shangSheCandidates.length} 个候选商社（也可搜索其他商社）</div>`
+      ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">${icon('info', 12)} 已根据客户信息缩小范围，找到 ${shangSheCandidates.length} 个候选商社（也可搜索其他商社）</div>`
       : '';
     const batchStatus = state.batchShangSheName
       ? `已匹配商社：${escapeHTML(state.batchShangSheName)}`
       : '未自动匹配到商社，可手动搜索选择';
     batchNoHTML = `
     <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🏷️ 商社与批次号</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${icon('tag', 14)} 商社与批次号</div>
       <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">${batchStatus}</div>
       ${candidateHint}
       <div style="display:grid;grid-template-columns:minmax(220px,1fr) minmax(220px,1fr) auto;gap:10px;align-items:center;">
@@ -286,7 +287,7 @@ export function renderExportControls(): string {
     const candidateList = shangSheCandidates;
 
     const candidateHint = candidateList.length > 0
-      ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">💡 已根据客户信息缩小范围，找到 ${candidateList.length} 个候选商社（也可搜索其他商社）</div>`
+      ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">${icon('info', 12)} 已根据客户信息缩小范围，找到 ${candidateList.length} 个候选商社（也可搜索其他商社）</div>`
       : '';
 
     // 仅当唯一候选时预填搜索框，保留可切换的入口
@@ -294,7 +295,7 @@ export function renderExportControls(): string {
 
     manualShangSheHTML = `
     <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">🔗 手动匹配商社</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${icon('search', 14)} 手动匹配商社</div>
       ${candidateHint}
       <div style="position:relative;">
         <div style="display:flex;gap:10px;align-items:center;">
@@ -329,7 +330,7 @@ export function renderExportControls(): string {
   if (state.targetTemplate === 'shenbianyun' || getSelectedTemplates().includes('shenbianyun')) {
     sbyOptionsHTML = `
     <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
-      <div style="font-size:13px;font-weight:600;margin-bottom:10px;">☁️ 身边云导出选项</div>
+      <div style="font-size:13px;font-weight:600;margin-bottom:10px;">${icon('cloud', 14)} 身边云导出选项</div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:8px;">
         <input type="checkbox" id="sby-show-batch-info" data-action="onSbyOptionChange" ${state.sbyShowBatchInfo?'checked':''} style="accent-color:var(--accent);">
         填写总笔数和总金额（不勾选则留空）
@@ -348,7 +349,7 @@ export function renderExportControls(): string {
     ${batchNoHTML}
     ${sbyOptionsHTML}
     ${manualShangSheHTML}
-    ${state.cleanCount > 0 ? `<div class="status-msg info">🧹 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
+    ${state.cleanCount > 0 ? `<div class="status-msg info">${icon('eraser', 14)} 数据预处理：自动清除了 <strong>${state.cleanCount}</strong> 个字段中的多余空格（姓名、身份证、手机号、银行卡号等）</div>` : ''}
     ${batchControlsHTML}`;
 }
 

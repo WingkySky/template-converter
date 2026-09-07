@@ -14,6 +14,7 @@
 //  - state.sbyShowBatchInfo/sbyPlainAmount 的直接赋值改 Object.assign（state.ts satisfies
 //    使布尔字段收窄为字面量类型，语义不变，与 controls.ts onSbyOptionChange 同款处理）。
 import { escapeHTML, byId, delegateAction } from '../dom';
+import { icon } from '../icons';
 import { state, DEFAULT_PREVIEW_ROW_LIMIT, type AppState, type OutputRowMeta } from '../../state';
 import type { Rows, Row } from '../../types';
 import { COL_TYPE_LABELS } from '../../core/mapping/column-detect';
@@ -210,7 +211,7 @@ function showCustomMappingUI(typeToCol: Record<string, number | null>, allDataRo
   const container = byId('export-content');
   byId('step-export').classList.remove('hidden');
 
-  let html = '<div style="font-size:14px;font-weight:600;margin-bottom:12px;">🔗 自定义列映射</div>';
+  let html = `<div style="font-size:14px;font-weight:600;margin-bottom:12px;">${icon('edit', 14)} 自定义列映射</div>`;
   state.customFields.forEach((field, fi) => {
     const opts = ['<option value="">— 不映射 —</option>'];
     Object.keys(typeToCol).forEach(type => {
@@ -222,7 +223,7 @@ function showCustomMappingUI(typeToCol: Record<string, number | null>, allDataRo
     </div>`;
   });
   // 原内联 onclick="genCustom()" → data-action（经 initExportStepDelegates 分发）
-  html += `<div class="btn-row"><button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="genCustom">✅ 生成</button></div>`;
+  html += `<div class="btn-row"><button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="genCustom">${icon('check', 15)} 生成</button></div>`;
   container.innerHTML = html;
 }
 
@@ -264,6 +265,11 @@ function genCustom() {
 
 
 // ==================== Export Step ====================
+// 模版切换按钮图标（SVG，替代原 emoji）
+const SWITCH_ICONS: Record<string, string> = {
+  yidao: 'rocket', shenbianyun: 'cloud', youyi: 'users', custom: 'edit',
+};
+
 export function showExportStep() {
   // 保存当前滚动位置和焦点信息
   const container = byId('export-content');
@@ -353,19 +359,19 @@ export function showExportStep() {
   const previewSwitchHTML = selectedExportTemplates.length > 1
     ? `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
         <span style="font-size:13px;font-weight:600;color:var(--text2);">切换预览:</span>
-        ${selectedExportTemplates.map(k => `<button class="btn ${k === state.targetTemplate ? 'btn-primary' : 'btn-secondary'} btn-sm" data-action="switchPreviewTemplate" data-key="${k}">${TEMPLATES[k].icon} ${TEMPLATES[k].name}</button>`).join('')}
+        ${selectedExportTemplates.map(k => `<button class="btn ${k === state.targetTemplate ? 'btn-primary' : 'btn-secondary'} btn-sm" data-action="switchPreviewTemplate" data-key="${k}">${icon(SWITCH_ICONS[k] || 'table', 13)} ${TEMPLATES[k].name}</button>`).join('')}
       </div>`
     : '';
   const splitGroupCount = splitActive ? getSplitGroups().length : 0;
   // 原内联 onclick="exportSelectedExcel()" → data-action（事件委托）
   const multiExportHTML = selectedExportTemplates.length > 1
     ? (splitActive
-      ? `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="exportSelectedExcel">📦 拆分打包导出（${selectedExportTemplates.length} 模板 × ${splitGroupCount} 来源 = ${selectedExportTemplates.length * splitGroupCount} 个 Excel）</button>`
-      : `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="exportSelectedExcel">📦 打包导出 ZIP（${selectedExportTemplates.length} 个 Excel）</button>`)
+      ? `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="exportSelectedExcel">${icon('package', 15)} 拆分打包导出（${selectedExportTemplates.length} 模板 × ${splitGroupCount} 来源 = ${selectedExportTemplates.length * splitGroupCount} 个 Excel）</button>`
+      : `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="exportSelectedExcel">${icon('package', 15)} 打包导出 ZIP（${selectedExportTemplates.length} 个 Excel）</button>`)
     : '';
 
   container.innerHTML = `
-    <div class="status-msg success">✅ 转换完成 — ${tplName}（${rows.length} 行）</div>
+    <div class="status-msg success">${icon('check', 15)} 转换完成 — ${tplName}（${rows.length} 行）</div>
     ${selectedExportTemplates.length > 1 ? `<div class="status-msg info">本次已选择：${selectedExportTemplates.map(k => TEMPLATES[k].name).join('、')}。当前表格预览为 ${tplName}。</div>` : ''}
     ${previewSwitchHTML}
     ${renderExportControls()}
@@ -375,11 +381,11 @@ export function showExportStep() {
     <div class="btn-row">
       ${multiExportHTML}
       ${splitActive
-        ? `<button class="btn btn-green" style="flex:1;padding:12px;font-size:15px;" data-action="exportExcel">📦 拆分导出 ZIP（${splitGroupCount} 份 Excel）</button>
-           <button class="btn btn-secondary" data-action="exportCSV">📦 拆分导出 CSV（${splitGroupCount} 份）</button>`
-        : `<button class="btn btn-green" style="flex:1;padding:12px;font-size:15px;" data-action="exportExcel">📥 导出 Excel（可选保存位置）</button>
-           <button class="btn btn-secondary" data-action="exportCSV">📥 导出 CSV</button>`}
-      <button class="btn btn-secondary" data-action="goBack" data-target="step-export">⬅️ 返回</button>
+        ? `<button class="btn btn-green" style="flex:1;padding:12px;font-size:15px;" data-action="exportExcel">${icon('package', 15)} 拆分导出 ZIP（${splitGroupCount} 份 Excel）</button>
+           <button class="btn btn-secondary" data-action="exportCSV">${icon('package', 15)} 拆分导出 CSV（${splitGroupCount} 份）</button>`
+        : `<button class="btn btn-green" style="flex:1;padding:12px;font-size:15px;" data-action="exportExcel">${icon('download', 15)} 导出 Excel（可选保存位置）</button>
+           <button class="btn btn-secondary" data-action="exportCSV">${icon('download', 15)} 导出 CSV</button>`}
+      <button class="btn btn-secondary" data-action="goBack" data-target="step-export">${icon('arrowLeft', 14)} 返回</button>
     </div>`;
 
   // 设置搜索下拉框所需的数据（存入 state 对象）

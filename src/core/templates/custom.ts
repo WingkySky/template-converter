@@ -13,7 +13,7 @@ const FILE_NAME = '自定义';
 export const customTemplate: TemplateDefinition = {
   key: 'custom',
   name: '自定义模版',
-  icon: '✏️',
+  icon: 'edit',
   desc: '自由定义列名和顺序',
   headers: [],
   fieldMap: {},

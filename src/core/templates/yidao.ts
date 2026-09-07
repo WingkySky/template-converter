@@ -14,7 +14,7 @@ const name = '移步到岗';
 export const yidaoTemplate: TemplateDefinition = {
   key: 'yidao',
   name,
-  icon: '🚀',
+  icon: 'rocket',
   desc: '简洁模版，6列核心信息（保留模版结构）',
   headers: ['姓名', '身份证', '手机号', '开户银行', '银行卡号', '税前金额'],
   fieldMap: { name: '姓名', idCard: '身份证', phone: '手机号', bankName: '开户银行', bankCard: '银行卡号', amount: '税前金额' },

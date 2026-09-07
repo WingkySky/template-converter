@@ -2,6 +2,7 @@
 // 静态上传区拖拽接线 → initUploadArea()；累加条动态 HTML 的内联
 // onclick="resetAll()" → data-action="resetAll" + initAccumIndicatorDelegate() 事件委托。
 import * as XLSX from 'xlsx';
+import { icon } from '../icons';
 import { byId, delegateAction } from '../dom';
 import { state } from '../../state';
 import { parseCSV, isGarbled } from '../../core/parser/parse-csv';
@@ -101,8 +102,8 @@ export function updateAccumIndicator(): void {
     el.classList.remove('hidden');
     el.innerHTML = `
       <div class="accum-bar">
-        <span>📂 已累加 ${state.accumFileCount} 个文件（${sel.length} 个数据表，${countSelectedRows()} 行数据）</span>
-        <button class="btn btn-secondary btn-sm" data-action="resetAll">🗑️ 清空</button>
+        <span>${icon('folder', 14)} 已累加 ${state.accumFileCount} 个文件（${sel.length} 个数据表，${countSelectedRows()} 行数据）</span>
+        <button class="btn btn-secondary btn-sm" data-action="resetAll">${icon('trash', 13)} 清空</button>
       </div>`;
   } else { el.classList.add('hidden'); }
 }

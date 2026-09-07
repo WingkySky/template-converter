@@ -12,7 +12,7 @@ const name = '云杉公司';
 export const youyiTemplate: TemplateDefinition = {
   key: 'youyi',
   name,
-  icon: '🤝',
+  icon: 'users',
   desc: '详细模版（保留配置表和任务清单）',
   headers: ['出错信息', '平台', '商社编号', '姓名', '身份证号码', '性别', '任务清单', '税源地', '工种', '手机号码', '账号', '银行名称', '银行所属地', '税前金额', '个税金额', '商业保险', '备注'],
   fieldMap: { name: '姓名', idCard: '身份证号码', gender: '性别', phone: '手机号码', bankCard: '账号', bankName: '银行名称', location: '银行所属地', amount: '税前金额', note: '备注', shangSheId: '商社编号' },

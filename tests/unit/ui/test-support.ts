@@ -34,6 +34,7 @@ export interface StubDom {
 // 步骤模块运行期会触碰的静态节点（index.html 骨架 + cf-input 动态节点）
 const KNOWN_IDS = [
   'kb-status-area', 'kb-upload-input', 'kb-config-upload-input', 'kb-import-input',
+  'kb-btn-upload', 'kb-btn-sample', 'kb-btn-config', 'kb-btn-export', 'kb-btn-import', 'kb-btn-clear',
   'upload-area', 'file-input', 'accum-indicator',
   'mapping-content', 'template-content', 'export-content',
   'step-mapping', 'step-template', 'step-export',

@@ -22,18 +22,18 @@ export const COL_KEYWORDS: Record<string, RegExp> = {
 
 export const COL_TYPE_LABELS: Record<string, string> = {
   '':         '— 不识别 —',
-  name:       '👤 姓名',
-  idCard:     '🪪 身份证',
-  phone:      '📱 手机号',
-  bankName:   '🏦 开户银行',
-  bankCard:   '💳 银行卡号',
-  amount:     '💰 税前金额',
-  gender:     '⚧ 性别',
-  location:   '📍 开户地/税源地',
-  note:       '📝 备注',
-  shangSheId: '🏢 商社编号',
-  clientName: '🏢 客户名称',
-  taxId: '🪪 纳税人识别号',
+  name:       '姓名',
+  idCard:     '身份证',
+  phone:      '手机号',
+  bankName:   '开户银行',
+  bankCard:   '银行卡号',
+  amount:     '税前金额',
+  gender:     '性别',
+  location:   '开户地/税源地',
+  note:       '备注',
+  shangSheId: '商社编号',
+  clientName: '客户名称',
+  taxId: '纳税人识别号',
 };
 
 /** detectColumnMapping 返回的单列识别信息（type 为空串表示未识别，与 legacy 行为一致） */

@@ -42,12 +42,12 @@ describe('renderExportControls', () => {
   it('身边云单模板：输出商社批次号面板与身边云选项（data-action）', () => {
     state.targetTemplate = 'shenbianyun';
     const html = renderExportControls();
-    expect(html).toContain('🏷️ 商社与批次号');
+    expect(html).toContain('商社与批次号');
     expect(html).toContain('data-action="onBatchNoChange"');
     expect(html).toContain('data-action="applyBatchShangSheFromSelection"');
-    expect(html).toContain('☁️ 身边云导出选项');
+    expect(html).toContain('身边云导出选项');
     expect(html).toContain('data-action="onSbyOptionChange"');
-    expect(html).not.toContain('📦 导出模式');
+    expect(html).not.toContain('导出模式');
     expect(html).not.toContain('批量设置平台:');
     expect(html).not.toContain('onclick=');
   });
@@ -56,8 +56,8 @@ describe('renderExportControls', () => {
     state.targetTemplate = 'youyi';
     state.unmatchedRows = [1];
     const html = renderExportControls();
-    expect(html).toContain('⚠️ 知识库匹配：1/2 行已匹配');
-    expect(html).toContain('🔗 手动匹配商社');
+    expect(html).toContain('知识库匹配：1/2 行已匹配');
+    expect(html).toContain('手动匹配商社');
     expect(html).toContain('data-action="applyManualShangShe"');
     expect(html).toContain('批量设置平台:');
     expect(html).toContain('data-action="applyPlatformToAll"');
@@ -74,9 +74,9 @@ describe('renderExportControls', () => {
     state.targetTemplate = 'youyi';
     state.cleanCount = 3;
     const html = renderExportControls();
-    expect(html).toContain('🧹 数据预处理：自动清除了 <strong>3</strong> 个字段中的多余空格');
-    expect(html.indexOf('🧹 数据预处理')).toBeGreaterThan(html.indexOf('🔗 手动匹配商社'));
-    expect(html.indexOf('🧹 数据预处理')).toBeLessThan(html.indexOf('批量设置平台:'));
+    expect(html).toContain('数据预处理：自动清除了 <strong>3</strong> 个字段中的多余空格');
+    expect(html.indexOf('数据预处理')).toBeGreaterThan(html.indexOf('🔗 手动匹配商社'));
+    expect(html.indexOf('数据预处理')).toBeLessThan(html.indexOf('批量设置平台:'));
   });
 
   it('拆分激活 + 身边云：模式单选与每份批次号面板（含分组状态写入）', () => {
@@ -93,11 +93,11 @@ describe('renderExportControls', () => {
     state.targetTemplate = 'shenbianyun';
     state.exportMode = 'byFile';
     const html = renderExportControls();
-    expect(html).toContain('📦 导出模式');
+    expect(html).toContain('导出模式');
     expect(html).toContain('data-action="onExportModeChange" data-mode="byFile"');
-    expect(html).toContain('🏷️ 每份批次号（拆分模式）');
+    expect(html).toContain('每份批次号（拆分模式）');
     expect(html).toContain('data-action="onSplitBatchNoChange"');
-    expect(html.indexOf('📦 导出模式')).toBeLessThan(html.indexOf('🏷️ 每份批次号'));
+    expect(html.indexOf('导出模式')).toBeLessThan(html.indexOf('每份批次号'));
     // 渲染时把分组列表暂存到 state.splitGroupList（原逻辑）
     expect(state.splitGroupList).toEqual(groups);
     // ensureSplitBatches 被调用

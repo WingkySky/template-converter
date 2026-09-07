@@ -85,7 +85,7 @@ export function filterShangSheList(prefix: string): void {
   dropdown.style.display = 'block';
   dropdown.innerHTML = filtered.map(item => {
     const isCandidate = candidateIds.has(item.id);
-    const candStyle = isCandidate ? 'background:rgba(253,203,110,0.08);' : '';
+    const candStyle = isCandidate ? 'background:var(--orange-soft);' : '';
     const candBadge = isCandidate ? '<span style="color:var(--orange);font-size:10px;margin-left:4px;">候选</span>' : '';
     return `<div class="ss-dropdown-item" data-ss-id="${escapeHTML(item.id)}" data-ss-label="${escapeHTML(item.label || item.id)}" data-ss-prefix="${prefix}" data-action="selectShangSheFromItem" style="${candStyle}">
       <span class="ss-id">${escapeHTML(item.id)}${candBadge}</span>

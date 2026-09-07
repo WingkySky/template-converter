@@ -15,6 +15,73 @@ import { isAmountLikeNumber, getAmountColumnScore } from './core/mapping/amount-
 import { COL_KEYWORDS, COL_TYPE_LABELS, detectColumnMapping } from './core/mapping/column-detect';
 import { sanitizeAmount, cleanValue } from './core/clean/values';
 
+// ==================== 阶段 1B：core/kb 已抽取 ====================
+import {
+  KB_STORAGE_KEY, KB_SCHEMA_VERSION, KB_MAIN_HEADERS, DEFAULT_CONFIG,
+  getConfigLists, migrateKB, mergeKnowledgeRows, knowledgeRowsFromKB,
+  applyConfigSheetRows, applyTaskListSheetRows,
+} from './core/kb/model';
+import {
+  uniqueTaxSources, kbInferTaxSourceByPlatformName, kbTaxSourceForPlatform, kbSignEntityToPlatform,
+} from './core/kb/tax-source';
+import {
+  parseTaskListEntries, generateGlobalTaskList, findTaskContent, normalizeTaskNameToWorkType,
+  inferWorkType, parseTaskString, kbGetTasksForShangShe, generateConfigSheet, generateTaskListSheet,
+} from './core/kb/task';
+import {
+  chineseInitial, shortNameForBatch, initialsForBatchName, buildBatchNoFromShangShe,
+  dedupeBatchNo, kbComputeBatchShangShe,
+} from './core/kb/batch';
+import {
+  kbLookupShangShe, kbLookupShangSheByTaxId, kbLookupShangSheByNameAll, kbLookupShangSheByName,
+  kbGetShangSheIdFromLookup, kbDetectSourceClientInfo, kbDetectBestShangSheMatch,
+} from './core/kb/shangshe';
+import {
+  inferBankLocationFromBranch, kbFillShangSheInfoForRow, kbGetRemarkPresetValue,
+} from './core/kb/shangshe-fill';
+
+
+// ==================== 阶段 1C：core/export 已抽取 ====================
+import { workbookToArray, crc32, dosDateTime, u16, u32, concatBytes, createZipBlob } from './core/export/zip';
+import { rowsToCSV } from './core/export/csv';
+import { getTodayStr } from './core/export/naming';
+import {
+  getSplitGroupsFromMeta as getSplitGroupsFromMetaCore,
+  splitGroupLabel as splitGroupLabelCore,
+  sanitizeFileNamePart,
+  getSplitFileBaseName as getSplitFileBaseNameCore,
+  allocSplitFileName as allocSplitFileNameCore,
+} from './core/export/split-core';
+import {
+  buildYidaoWorkbook, buildGenericWorkbook,
+  buildShenbianyunWorkbookCore, buildYouyiWorkbook as buildYouyiWorkbookCore,
+} from './core/export/builders';
+
+
+// ---- 阶段 1C 桥接包装：core 版为纯函数，导出模式/模版名/选项经参数传入 ----
+function getSplitGroupsFromMeta(meta) {
+  return getSplitGroupsFromMetaCore(meta, state.exportMode);
+}
+function splitGroupLabel(g) {
+  return splitGroupLabelCore(g, state.exportMode);
+}
+function splitTplName(templateKey) {
+  return templateKey === 'custom' ? '自定义' : (TEMPLATES[templateKey]?.name || '转换结果');
+}
+function getSplitFileBaseName(g, templateKey) {
+  return getSplitFileBaseNameCore(g, splitTplName(templateKey), state.exportMode);
+}
+function allocSplitFileName(g, templateKey, ext, usedNames) {
+  return allocSplitFileNameCore(g, ext, usedNames, splitTplName(templateKey), state.exportMode);
+}
+function buildShenbianyunWorkbook(headers, rows, batchNo = '') {
+  return buildShenbianyunWorkbookCore(headers, rows, batchNo, { showBatchInfo: state.sbyShowBatchInfo, plainAmount: state.sbyPlainAmount });
+}
+function buildYouyiWorkbook(headers, rows) {
+  return buildYouyiWorkbookCore(headers, rows, { kb: loadKB(), generateConfigSheet, generateTaskListSheet });
+}
+
+
 // ==================== State ====================
 const DEFAULT_PREVIEW_ROW_LIMIT = 8;
 const PREVIEW_ROW_INCREMENT = 20;
@@ -72,140 +139,26 @@ function updateOutputRow(rowIdx, colIdx, value) {
 }
 
 // ==================== 知识库 (Knowledge Base) ====================
-const KB_STORAGE_KEY = 'lg_knowledge_base';
-const KB_SCHEMA_VERSION = 1;
 
-// 默认配置数据（硬编码兜底）
-const DEFAULT_CONFIG = {
-  taxSources: ['0001.湖南','0002.海南','0003.河南','0004.安徽','0005.信宜','0006.湖北','0007.天津'],
-  platforms: ['278.甲乙科技','283.丙丁工场','288.戊己客（灵活用工）6.2%','290.庚辛云','294.湖南清源','295.岳西众才','298.戊己客（企和推荐）7.1%','349.河南雅文','356.国联信宜','367.安徽优文莱（培训业务）','375.湖南合用工','376.戊己客（冠华系列）6.42%+50','378.安徽薪账通','379.咸宁合用工6.1%','397.戊己客平台（自营业务）7.5%','409.天津税地（身边云）5.6%','451.戊己客（7.9%）','453.戊己客（7.1%）','454.戊己客（8.1%）','455.戊己客（8.7%）','456.戊己客（9.6%）','461.戊己客（7.7%）','462.戊己客（7.5%）','468.潮涌（8.2%）','481.星薪平台（6.1%）','484.江西合用工（6.1%）','485.小规模纳税企业结算（6.67%）','486.河南茂丰源（5.4%）'],
-  signEntityMapping: {
-    '佛山云杉': ['佛山', '甲乙'],
-    '广州南沙云杉': ['南沙'],
-    '广州国联': ['国联'],
-    '广州云杉': ['广州', '丙丁'],
-    '深圳云杉': ['深圳', '梓合'],
-    '东莞云杉': ['东莞', '梓才']
-  },
-  platformTaxSourceMapping: {
-    '天津': '0007.天津',
-    '身边云': '0007.天津',
-    '戊己客': '0007.天津',
-    '河南': '0003.河南',
-    '茂丰源': '0003.河南',
-    '雅文': '0003.河南',
-    '安徽': '0004.安徽',
-    '岳西': '0004.安徽',
-    '优文莱': '0004.安徽',
-    '薪账通': '0004.安徽',
-    '信宜': '0005.信宜',
-    '国联': '0005.信宜',
-    '湖北': '0006.湖北',
-    '咸宁': '0006.湖北',
-    '海南': '0002.海南',
-    '湖南': '0001.湖南',
-    '合用工': '0001.湖南',
-    '清源': '0001.湖南',
-    '甲乙': '0001.湖南'
-  }
-};
 
-function getConfigLists(kb) {
-  const hasUploadedPlatforms = kb?.configData?.platforms && kb.configData.platforms.length > 0;
-  return {
-    platforms: hasUploadedPlatforms ? kb.configData.platforms : DEFAULT_CONFIG.platforms,
-    taxSources: hasUploadedPlatforms ? (kb.configData.taxSources || []) : DEFAULT_CONFIG.taxSources,
-    hasUploadedPlatforms
-  };
-}
 
-function uniqueTaxSources(taxSources) {
-  return Array.from(new Set([...(taxSources || []), ...DEFAULT_CONFIG.taxSources].filter(Boolean)));
-}
 
 function inferTaxSourceByPlatformName(platform) {
-  const name = String(platform || '');
-  if (!name) return '';
-  // 优先使用知识库配置
-  const kb = loadKB();
-  if (kb.configData && kb.configData.platformTaxSourceMapping) {
-    for (const [keyword, taxSource] of Object.entries(kb.configData.platformTaxSourceMapping)) {
-      if (name.includes(keyword)) return taxSource;
-    }
-  }
-  // 兜底：使用 DEFAULT_CONFIG 中的映射
-  if (DEFAULT_CONFIG.platformTaxSourceMapping) {
-    for (const [keyword, taxSource] of Object.entries(DEFAULT_CONFIG.platformTaxSourceMapping)) {
-      if (name.includes(keyword)) return taxSource;
-    }
-  }
-  return '';
+  return kbInferTaxSourceByPlatformName(loadKB(), platform);
 }
+
 
 function taxSourceForPlatform(platform, kb) {
-  if (!platform) return '';
-  const { platforms, taxSources, hasUploadedPlatforms } = getConfigLists(kb || loadKB());
-  const platIdx = platforms.indexOf(platform);
-  if (hasUploadedPlatforms && platIdx >= 0 && taxSources[platIdx]) {
-    return taxSources[platIdx];
-  }
-  return inferTaxSourceByPlatformName(platform);
+  return kbTaxSourceForPlatform(kb || loadKB(), platform);
 }
 
-// 签约主体 → 平台映射
+
 function signEntityToPlatform(signEntity, platforms) {
-  if (!signEntity) return '';
-  const allPlatforms = platforms || DEFAULT_CONFIG.platforms;
-  // 优先使用知识库配置
-  const kb = loadKB();
-  if (kb.configData && kb.configData.signEntityMapping) {
-    const mapping = kb.configData.signEntityMapping;
-    // 按键长度降序排列，优先匹配更具体的签约主体（如"广州南沙云杉"优先于"广州云杉"）
-    const sortedKeys = Object.keys(mapping).sort((a, b) => b.length - a.length);
-    for (const key of sortedKeys) {
-      if (signEntity.includes(key)) {
-        const keywords = mapping[key];
-        for (const keyword of keywords) {
-          const found = allPlatforms.find(p => p.includes(keyword));
-          if (found) return found;
-        }
-      }
-    }
-  }
-  // 兜底：使用 DEFAULT_CONFIG 中的映射
-  if (DEFAULT_CONFIG.signEntityMapping) {
-    const mapping = DEFAULT_CONFIG.signEntityMapping;
-    const sortedKeys = Object.keys(mapping).sort((a, b) => b.length - a.length);
-    for (const key of sortedKeys) {
-      if (signEntity.includes(key)) {
-        const keywords = mapping[key];
-        for (const keyword of keywords) {
-          const found = allPlatforms.find(p => p.includes(keyword));
-          if (found) return found;
-        }
-      }
-    }
-  }
-  // 最终兜底：模糊匹配
-  const keywords = signEntity.replace(/有限公司|人力资源|服务|广州|佛山/g, '').slice(0, 4);
-  if (keywords) {
-    const match = allPlatforms.find(p => p.includes(keywords));
-    if (match) return match;
-  }
-  return '';
+  return kbSignEntityToPlatform(loadKB(), signEntity, platforms);
 }
 
 let _kbCache = null;  // KB 内存缓存
 
-// 数据迁移
-function migrateKB(kb) {
-  if (!kb.schemaVersion || kb.schemaVersion < KB_SCHEMA_VERSION) {
-    // 未来版本迁移逻辑在此添加
-    // if (kb.schemaVersion < 2) { ... }
-    kb.schemaVersion = KB_SCHEMA_VERSION;
-  }
-  return kb;
-}
 
 // 加载知识库
 function loadKB() {
@@ -267,106 +220,10 @@ function clearKB() {
   updateKBStatus();
 }
 
-const KB_MAIN_HEADERS = ['商社编号','商社简称','商社全称','一级业务类型','二级业务类型','纳税人识别号','签约费率','签约主体','任务名称','服务内容'];
 
-function mergeKnowledgeRows(rows, kb) {
-  let newCount = 0, updateCount = 0;
 
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i] || [];
-    const shangSheId = String(row[0] || '').trim();
-    if (!shangSheId) continue;
 
-    const shortName = String(row[1] || '').trim();
-    const fullName = String(row[2] || '').trim();
-    const taxId = String(row[5] || '').trim();
-    const feeRateRaw = String(row[6] || '').trim();
-    const feeRate = parseFloat(feeRateRaw) || 0;
-    const signEntity = String(row[7] || '').trim();
-    const taskName = String(row[8] || '').trim();
-    const taskContent = String(row[9] || '').trim();
 
-    if (kb.shangSheMap[shangSheId]) {
-      const entry = kb.shangSheMap[shangSheId];
-      if (!Array.isArray(entry.tasks)) entry.tasks = [];
-      if (shortName) entry.shortName = shortName;
-      if (fullName) entry.fullName = fullName;
-      if (taxId) entry.taxId = taxId;
-      if (feeRateRaw) entry.feeRate = feeRate;
-      if (signEntity) entry.signEntity = signEntity;
-      if (taskName) {
-        const exists = entry.tasks.some(t => t.name === taskName && (t.content || '') === taskContent);
-        if (!exists) entry.tasks.push({ name: taskName, content: taskContent });
-      }
-      updateCount++;
-    } else {
-      const entry = {
-        id: shangSheId,
-        shortName: shortName,
-        fullName: fullName,
-        taxId: taxId,
-        feeRate: feeRate,
-        signEntity: signEntity,
-        tasks: []
-      };
-      if (taskName) entry.tasks.push({ name: taskName, content: taskContent });
-      kb.shangSheMap[shangSheId] = entry;
-      newCount++;
-    }
-  }
-
-  return { newCount, updateCount };
-}
-
-function knowledgeRowsFromKB(kb) {
-  const rows = [KB_MAIN_HEADERS];
-  for (const entry of Object.values(kb.shangSheMap)) {
-    const tasks = Array.isArray(entry.tasks) && entry.tasks.length > 0 ? entry.tasks : [{ name: '', content: '' }];
-    for (const task of tasks) {
-      rows.push([
-        entry.id || '',
-        entry.shortName || '',
-        entry.fullName || '',
-        '',
-        '',
-        entry.taxId || '',
-        entry.feeRate ?? '',
-        entry.signEntity || '',
-        task.name || '',
-        task.content || ''
-      ]);
-    }
-  }
-  return rows;
-}
-
-function applyConfigSheetRows(rows, kb) {
-  if (rows.length < 2) return;
-  const taxSources = [];
-  const platforms = [];
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i] || [];
-    const taxVal = String(row[0] || '').trim();
-    const platVal = String(row[1] || '').trim();
-    if (taxVal) taxSources.push(taxVal);
-    if (platVal) platforms.push(platVal);
-  }
-  if (taxSources.length > 0 || platforms.length > 0) {
-    kb.configData = { taxSources, platforms };
-  }
-}
-
-function applyTaskListSheetRows(rows, kb) {
-  if (rows.length < 2) return;
-  const taskEntries = [];
-  for (let i = 1; i < rows.length; i++) {
-    const entry = String((rows[i] || [])[0] || '').trim();
-    if (entry) taskEntries.push(entry);
-  }
-  if (taskEntries.length > 0) {
-    kb.taskListData = taskEntries;
-  }
-}
 
 // 导出知识库为Excel备份文件（用户看到中文列名，内部仍保存JSON结构）
 function exportKBToExcel() {
@@ -757,473 +614,66 @@ function updateKBStatus() {
   }
 }
 
-// 从taskListData中解析匹配指定商社编号的任务条目
-function parseTaskListEntries(taskListData, shangSheId, entry) {
-  if (!taskListData || !taskListData.length) return [];
-  const entries = [];
-  for (const taskEntry of taskListData) {
-    const match = taskEntry.match(/^(\d+)\.(.+)\((.+)\)$/);
-    if (match && match[3] === String(shangSheId).trim()) {
-      entries.push({
-        seq: parseInt(match[1]),
-        name: match[2],
-        shangSheId: match[3],
-        content: findTaskContent(entry, match[2]),
-        fullString: taskEntry
-      });
-    }
-  }
-  return entries;
-}
 
-// 查找商社信息
+
 function lookupShangShe(shangSheId) {
-  if (!shangSheId) return null;
-  const kb = loadKB();
-  const entry = kb.shangSheMap[String(shangSheId).trim()];
-  if (!entry) return null;
-
-  const { platforms } = getConfigLists(kb);
-  const platform = signEntityToPlatform(entry.signEntity, platforms);
-  const taxSource = taxSourceForPlatform(platform, kb);
-
-  // 从taskListData中查找匹配该商社编号的任务
-  let matchedTasks = parseTaskListEntries(kb.taskListData, shangSheId, entry);
-
-  // 如果taskListData没有匹配到，回退到KB的tasks
-  if (matchedTasks.length === 0 && entry.tasks && entry.tasks.length > 0) {
-    const globalTasks = generateGlobalTaskList(kb);
-    for (const task of entry.tasks) {
-      const globalTask = globalTasks.find(t => t.name === task.name && t.shangSheId === String(shangSheId).trim());
-      matchedTasks.push({
-        seq: globalTask ? globalTask.seq : 1,
-        name: task.name,
-        shangSheId: String(shangSheId).trim(),
-        content: task.content || '',
-        fullString: `${globalTask ? globalTask.seq : 1}.${task.name}(${String(shangSheId).trim()})`
-      });
-    }
-  }
-
-  return {
-    platform: platform,
-    taxSource: taxSource,
-    tasks: entry.tasks || [],
-    matchedTasks: matchedTasks,
-    signEntity: entry.signEntity,
-    feeRate: entry.feeRate,
-    shortName: entry.shortName,
-    fullName: entry.fullName,
-    taxId: entry.taxId
-  };
+  return kbLookupShangShe(loadKB(), shangSheId);
 }
 
-// 通过纳税人识别号查找商社信息
+
 function lookupShangSheByTaxId(taxId) {
-  if (!taxId) return null;
-  const kb = loadKB();
-  const trimmedId = String(taxId).trim().toUpperCase();
-  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-    if (entry.taxId && entry.taxId.trim().toUpperCase() === trimmedId) {
-      return lookupShangShe(id);
-    }
-  }
-  return null;
+  return kbLookupShangSheByTaxId(loadKB(), taxId);
 }
 
-// 通过商社全称或简称查找商社信息（返回所有匹配）
+
 function lookupShangSheByNameAll(name) {
-  if (!name) return [];
-  const kb = loadKB();
-  const trimmedName = String(name).trim();
-  const results = [];
-  const seen = new Set();
-  // Exact fullName match
-  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-    if (entry.fullName && entry.fullName.trim() === trimmedName && !seen.has(id)) {
-      seen.add(id);
-      results.push({ id, lookup: lookupShangShe(id), matchType: '全称精确' });
-    }
-  }
-  // Exact shortName match
-  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-    if (entry.shortName && entry.shortName.trim() === trimmedName && !seen.has(id)) {
-      seen.add(id);
-      results.push({ id, lookup: lookupShangShe(id), matchType: '简称精确' });
-    }
-  }
-  // Partial match
-  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-    if (seen.has(id)) continue;
-    if ((entry.fullName && entry.fullName.includes(trimmedName)) ||
-        (entry.shortName && entry.shortName.includes(trimmedName)) ||
-        (entry.fullName && trimmedName.includes(entry.fullName.trim())) ||
-        (entry.shortName && trimmedName.includes(entry.shortName.trim()))) {
-      seen.add(id);
-      results.push({ id, lookup: lookupShangShe(id), matchType: '模糊匹配' });
-    }
-  }
-  return results;
+  return kbLookupShangSheByNameAll(loadKB(), name);
 }
 
-// 通过商社全称或简称查找商社信息（返回第一个匹配）
+
 function lookupShangSheByName(name) {
-  if (!name) return null;
-  const kb = loadKB();
-  const trimmedName = String(name).trim();
-  // First try exact match on fullName
-  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-    if (entry.fullName && entry.fullName.trim() === trimmedName) {
-      return lookupShangShe(id);
-    }
-  }
-  // Then try exact match on shortName
-  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-    if (entry.shortName && entry.shortName.trim() === trimmedName) {
-      return lookupShangShe(id);
-    }
-  }
-  // Then try partial match (name contains or is contained in fullName/shortName)
-  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-    if ((entry.fullName && entry.fullName.includes(trimmedName)) ||
-        (entry.shortName && entry.shortName.includes(trimmedName))) {
-      return lookupShangShe(id);
-    }
-  }
-  // Also try reverse: fullName contains the name
-  for (const [id, entry] of Object.entries(kb.shangSheMap)) {
-    if (entry.fullName && trimmedName.includes(entry.fullName.trim())) {
-      return lookupShangShe(id);
-    }
-    if (entry.shortName && trimmedName.includes(entry.shortName.trim())) {
-      return lookupShangShe(id);
-    }
-  }
-  return null;
+  return kbLookupShangSheByName(loadKB(), name);
 }
+
 
 function detectSourceClientInfo(sourcesData, sourcesOverride) {
-  const scanSources = sourcesOverride || state.sources.filter(s => s.selected);
-  let detectedClientName = '';
-  for (const src of scanSources) {
-    const allRows = src.rows;
-    for (let ri = 0; ri < allRows.length; ri++) {
-      const row = allRows[ri] || [];
-      for (let ci = 0; ci < row.length; ci++) {
-        const cellStr = String(row[ci] || '').trim();
-        const m1 = cellStr.match(/(?:客户名称|公司名称|委托方|甲方)[：:]\s*(.+)/);
-        if (m1 && m1[1]) {
-          detectedClientName = m1[1].trim();
-          break;
-        }
-        if (/^(?:客户名称|公司名称|委托方|甲方)[：:]?$/.test(cellStr)) {
-          const nextVal = row[ci + 1] ? String(row[ci + 1]).trim() : '';
-          if (nextVal) {
-            detectedClientName = nextVal;
-            break;
-          }
-        }
-      }
-      if (detectedClientName) break;
-    }
-    if (detectedClientName) break;
-  }
-
-  let mappedClientName = '';
-  sourcesData.forEach(({ dataRows, typeToCol }) => {
-    if (mappedClientName) return;
-    if (typeToCol.clientName != null) {
-      const firstVal = dataRows[0]?.[typeToCol.clientName];
-      if (firstVal) mappedClientName = String(firstVal).trim();
-    }
-  });
-
-  let detectedTaxId = '';
-  for (const src of scanSources) {
-    const allRows = src.rows;
-    for (let ri = 0; ri < allRows.length; ri++) {
-      const row = allRows[ri] || [];
-      for (let ci = 0; ci < row.length; ci++) {
-        const cellStr = String(row[ci] || '').trim();
-        const m1 = cellStr.match(/(?:统一信用代码|纳税人识别号|统一社会信用代码|税号|信用代码)[：:]\s*(.+)/);
-        if (m1 && m1[1]) {
-          detectedTaxId = m1[1].trim();
-          break;
-        }
-        if (/^(?:统一信用代码|纳税人识别号|统一社会信用代码|税号|信用代码)[：:]?$/.test(cellStr)) {
-          const nextVal = row[ci + 1] ? String(row[ci + 1]).trim() : '';
-          if (nextVal) {
-            detectedTaxId = nextVal;
-            break;
-          }
-        }
-      }
-      if (detectedTaxId) break;
-    }
-    if (detectedTaxId) break;
-  }
-
-  let mappedTaxId = '';
-  sourcesData.forEach(({ dataRows, typeToCol }) => {
-    if (mappedTaxId) return;
-    if (typeToCol.taxId != null) {
-      const firstVal = dataRows[0]?.[typeToCol.taxId];
-      if (firstVal) mappedTaxId = String(firstVal).trim();
-    }
-  });
-
-  return {
-    clientName: detectedClientName || mappedClientName,
-    taxId: detectedTaxId || mappedTaxId
-  };
+  return kbDetectSourceClientInfo(sourcesData, sourcesOverride || state.sources.filter(s => s.selected));
 }
+
 
 function getShangSheIdFromLookup(lookup) {
-  if (!lookup) return '';
-  const kb = loadKB();
-  for (const [id, entry] of Object.entries(kb.shangSheMap || {})) {
-    if (entry.fullName === lookup.fullName || entry.shortName === lookup.shortName || entry.taxId === lookup.taxId) return id;
-  }
-  return '';
+  return kbGetShangSheIdFromLookup(loadKB(), lookup);
 }
+
 
 function detectBestShangSheMatch(sourcesData, sourcesOverride) {
-  let mappedShangSheId = '';
-  sourcesData.forEach(({ dataRows, typeToCol }) => {
-    if (mappedShangSheId) return;
-    if (typeToCol.shangSheId != null) {
-      const firstVal = dataRows[0]?.[typeToCol.shangSheId];
-      if (firstVal) mappedShangSheId = String(firstVal).trim();
-    }
-  });
-  if (mappedShangSheId) {
-    const lookup = lookupShangShe(mappedShangSheId);
-    if (lookup) {
-      return { lookup, id: mappedShangSheId, candidates: [], clientName: '', taxId: '' };
-    }
-  }
-
-  const { clientName, taxId } = detectSourceClientInfo(sourcesData, sourcesOverride);
-  let bestLookup = taxId ? lookupShangSheByTaxId(taxId) : null;
-  let candidates = [];
-
-  if (!bestLookup && clientName) {
-    const clientNameLookups = lookupShangSheByNameAll(clientName);
-    if (clientNameLookups.length === 1) {
-      bestLookup = clientNameLookups[0].lookup;
-    } else if (clientNameLookups.length > 1) {
-      candidates = clientNameLookups.map(c => ({ id: c.id, label: `${c.id} - ${c.lookup.shortName || c.lookup.fullName}`, matchType: c.matchType }));
-    }
-  }
-
-  return {
-    lookup: bestLookup,
-    id: getShangSheIdFromLookup(bestLookup),
-    candidates,
-    clientName,
-    taxId
-  };
+  return kbDetectBestShangSheMatch(loadKB(), sourcesData, sourcesOverride || state.sources.filter(s => s.selected));
 }
 
-const PINYIN_INITIAL_SPECIALS = {
-  晟: 'S', 联: 'L', 数: 'S', 码: 'M', 博: 'B', 跃: 'Y', 重: 'C', 长: 'C', 厦: 'X', 曾: 'Z', 单: 'S'
-};
 
-const PINYIN_BOUNDARIES = [
-  ['A','阿'], ['B','八'], ['C','嚓'], ['D','咑'], ['E','妸'], ['F','发'], ['G','旮'],
-  ['H','哈'], ['J','讥'], ['K','咖'], ['L','垃'], ['M','妈'], ['N','拿'], ['O','哦'],
-  ['P','啪'], ['Q','七'], ['R','呥'], ['S','仨'], ['T','他'], ['W','哇'], ['X','夕'],
-  ['Y','丫'], ['Z','匝']
-];
 
-function chineseInitial(ch) {
-  if (!ch) return '';
-  if (/[A-Za-z]/.test(ch)) return ch.toUpperCase();
-  if (!/[\u4e00-\u9fff]/.test(ch)) return '';
-  if (PINYIN_INITIAL_SPECIALS[ch]) return PINYIN_INITIAL_SPECIALS[ch];
-  let initial = 'Z';
-  for (const [letter, boundary] of PINYIN_BOUNDARIES) {
-    if (ch.localeCompare(boundary, 'zh-Hans-CN-u-co-pinyin') >= 0) initial = letter;
-    else break;
-  }
-  return initial;
-}
 
-function shortNameForBatch(shortName) {
-  let s = String(shortName || '').trim();
-  if (!s) return '';
-  s = s.split(/[-－—]/).filter(Boolean).pop().trim();
-  return s.replace(/有限公司|有限责任公司|公司|集团/g, '') || s;
-}
 
-function initialsForBatchName(name) {
-  const raw = String(name || '').trim();
-  const initials = Array.from(raw).map(chineseInitial).join('');
-  return initials || 'UNKNOWN';
-}
 
-function buildBatchNoFromShangShe(lookup) {
-  if (!lookup) return '';
-  const baseName = shortNameForBatch(lookup.shortName || lookup.fullName);
-  return `${getTodayStr()}${initialsForBatchName(baseName)}-A`;
-}
+
 
 function applyBatchShangShe(lookup, id) {
-  state.batchShangSheId = id || getShangSheIdFromLookup(lookup);
-  state.batchShangSheName = lookup?.shortName || lookup?.fullName || '';
-  state.batchNo = buildBatchNoFromShangShe(lookup);
+  const r = kbComputeBatchShangShe(loadKB(), lookup, id);
+  state.batchShangSheId = r.batchShangSheId;
+  state.batchShangSheName = r.batchShangSheName;
+  state.batchNo = r.batchNo;
 }
 
-// 生成全局任务清单（带序号）
-function generateGlobalTaskList(kb) {
-  const entries = Object.values(kb.shangSheMap);
-  const taskList = [];
-  let seq = 1;
-  for (const entry of entries) {
-    for (const task of (entry.tasks || [])) {
-      taskList.push({ seq: seq++, name: task.name, shangSheId: entry.id, content: task.content });
-    }
-  }
-  return taskList;
-}
 
-function findTaskContent(entry, taskName) {
-  if (!entry || !Array.isArray(entry.tasks) || !taskName) return '';
-  const task = entry.tasks.find(t => String(t.name || '').trim() === String(taskName || '').trim());
-  return task ? String(task.content || '').trim() : '';
-}
 
-const WORK_TYPE_RULES = [
-  { value: '保洁', pattern: /保洁|清洁|清扫|打扫|清洗|家政|卫生/ },
-  { value: '搬运', pattern: /搬运|装卸|分拣|理货|仓储|打包|包装|配送|快递|物流/ },
-  { value: '司机', pattern: /司机|驾驶|代驾|开车|车辆|运输/ },
-  { value: '客服', pattern: /客服|客户服务|呼叫|回访|咨询|售后/ },
-  { value: '销售', pattern: /销售|促销|推广|导购|营销|业务拓展/ },
-  { value: '技术', pattern: /技术|开发|软件|系统|运维|测试|信息|数据|网络|设计/ },
-  { value: '培训', pattern: /培训|讲师|授课|教学|辅导|教练/ },
-  { value: '翻译', pattern: /翻译|口译|笔译/ },
-  { value: '摄影', pattern: /摄影|摄像|拍摄|剪辑|视频|直播/ },
-  { value: '安保', pattern: /安保|保安|秩序|巡逻|门卫/ },
-  { value: '餐饮', pattern: /餐饮|厨师|后厨|配餐|服务员|洗碗/ },
-  { value: '文员', pattern: /文员|行政|助理|录入|文案|资料整理/ },
-  { value: '安装维修', pattern: /安装|维修|维护|检修|修理|装配/ }
-];
 
-function normalizeTaskNameToWorkType(taskName) {
-  let s = String(taskName || '').trim();
-  if (!s) return '';
-  s = s.replace(/^\d+\./, '').replace(/\([^)]*\)\s*$/, '').trim();
-  s = s.replace(/^(提供|从事|完成|开展)/, '').replace(/(类)?(服务|工作|任务|人员|岗位)$/g, '').trim();
-  return s || String(taskName || '').trim();
-}
 
-function inferWorkType(task, row, typeToCol) {
-  const rowTextParts = [];
-  if (row && typeToCol) {
-    ['note', 'clientName'].forEach(type => {
-      if (typeToCol[type] != null) rowTextParts.push(row[typeToCol[type]]);
-    });
-  }
-  const taskName = typeof task === 'string' ? task : (task?.name || '');
-  const taskContent = typeof task === 'string' ? '' : (task?.content || '');
-  const text = [...rowTextParts, taskContent, taskName].map(v => String(v || '')).join(' ');
 
-  for (const rule of WORK_TYPE_RULES) {
-    if (rule.pattern.test(text)) return rule.value;
-  }
 
-  const serviceMatch = text.match(/(?:提供|从事|完成|开展)([^，。,；;\s]{2,12}?)(?:服务|工作|任务)/);
-  if (serviceMatch && serviceMatch[1]) return normalizeTaskNameToWorkType(serviceMatch[1]);
 
-  return normalizeTaskNameToWorkType(taskName);
-}
 
-function parseTaskString(taskString) {
-  const match = String(taskString || '').match(/^\d+\.(.+)\((.+)\)$/);
-  return match ? { name: match[1], shangSheId: match[2], fullString: taskString } : null;
-}
 
-const BANK_LOCATION_NAMES = [
-  '北京','上海','天津','重庆','香港','澳门',
-  '广州','深圳','珠海','汕头','佛山','韶关','湛江','肇庆','江门','茂名','惠州','梅州','汕尾','河源','阳江','清远','东莞','中山','潮州','揭阳','云浮',
-  '杭州','宁波','温州','嘉兴','湖州','绍兴','金华','衢州','舟山','台州','丽水',
-  '南京','苏州','无锡','常州','南通','扬州','镇江','泰州','徐州','连云港','淮安','盐城','宿迁',
-  '福州','厦门','泉州','漳州','莆田','三明','南平','龙岩','宁德',
-  '长沙','株洲','湘潭','衡阳','邵阳','岳阳','常德','张家界','益阳','郴州','永州','怀化','娄底','湘西',
-  '武汉','黄石','十堰','宜昌','襄阳','鄂州','荆门','孝感','荆州','黄冈','咸宁','随州','恩施',
-  '郑州','开封','洛阳','平顶山','安阳','鹤壁','新乡','焦作','濮阳','许昌','漯河','三门峡','南阳','商丘','信阳','周口','驻马店','济源',
-  '合肥','芜湖','蚌埠','淮南','马鞍山','淮北','铜陵','安庆','黄山','滁州','阜阳','宿州','六安','亳州','池州','宣城',
-  '南昌','景德镇','萍乡','九江','新余','鹰潭','赣州','吉安','宜春','抚州','上饶',
-  '济南','青岛','淄博','枣庄','东营','烟台','潍坊','济宁','泰安','威海','日照','临沂','德州','聊城','滨州','菏泽',
-  '成都','自贡','攀枝花','泸州','德阳','绵阳','广元','遂宁','内江','乐山','南充','眉山','宜宾','广安','达州','雅安','巴中','资阳','阿坝','甘孜','凉山',
-  '西安','铜川','宝鸡','咸阳','渭南','延安','汉中','榆林','安康','商洛',
-  '沈阳','大连','鞍山','抚顺','本溪','丹东','锦州','营口','阜新','辽阳','盘锦','铁岭','朝阳','葫芦岛',
-  '长春','吉林','四平','辽源','通化','白山','松原','白城','延边',
-  '哈尔滨','齐齐哈尔','鸡西','鹤岗','双鸭山','大庆','伊春','佳木斯','七台河','牡丹江','黑河','绥化','大兴安岭',
-  '石家庄','唐山','秦皇岛','邯郸','邢台','保定','张家口','承德','沧州','廊坊','衡水',
-  '太原','大同','阳泉','长治','晋城','朔州','晋中','运城','忻州','临汾','吕梁',
-  '呼和浩特','包头','乌海','赤峰','通辽','鄂尔多斯','呼伦贝尔','巴彦淖尔','乌兰察布','兴安','锡林郭勒','阿拉善',
-  '南宁','柳州','桂林','梧州','北海','防城港','钦州','贵港','玉林','百色','贺州','河池','来宾','崇左',
-  '海口','三亚','三沙','儋州',
-  '贵阳','六盘水','遵义','安顺','毕节','铜仁','黔西南','黔东南','黔南',
-  '昆明','曲靖','玉溪','保山','昭通','丽江','普洱','临沧','楚雄','红河','文山','西双版纳','大理','德宏','怒江','迪庆',
-  '拉萨','日喀则','昌都','林芝','山南','那曲','阿里',
-  '兰州','嘉峪关','金昌','白银','天水','武威','张掖','平凉','酒泉','庆阳','定西','陇南','临夏','甘南',
-  '西宁','海东','海北','黄南','海南','果洛','玉树','海西',
-  '银川','石嘴山','吴忠','固原','中卫',
-  '乌鲁木齐','克拉玛依','吐鲁番','哈密','昌吉','博尔塔拉','巴音郭楞','阿克苏','克孜勒苏','喀什','和田','伊犁','塔城','阿勒泰'
-];
 
-const BANK_LOCATION_PROVINCES = ['河北','山西','辽宁','吉林','黑龙江','江苏','浙江','安徽','福建','江西','山东','河南','湖北','湖南','广东','海南','四川','贵州','云南','陕西','甘肃','青海','台湾','内蒙古','广西','西藏','宁夏','新疆'];
-
-function inferBankLocationFromBranch(bankName) {
-  const raw = String(bankName || '').trim();
-  if (!raw) return '0';
-  const text = raw.replace(/中国|股份有限公司|有限责任公司|银行|信用社|农商行|支行|分行|营业部|营业厅|储蓄所|网点/g, '');
-  const city = BANK_LOCATION_NAMES.find(name => text.includes(name));
-  if (city) return city;
-  const province = BANK_LOCATION_PROVINCES.find(name => text.includes(name));
-  return province || '0';
-}
-
-// 生成配置表sheet数据
-function generateConfigSheet(kb) {
-  // 优先使用KB中上传的配置数据，否则使用默认配置
-  let taxSources, platforms;
-  if (kb.configData && kb.configData.taxSources && kb.configData.taxSources.length > 0) {
-    taxSources = kb.configData.taxSources;
-    platforms = kb.configData.platforms || [];
-  } else {
-    taxSources = DEFAULT_CONFIG.taxSources;
-    platforms = DEFAULT_CONFIG.platforms;
-  }
-
-  const maxLen = Math.max(taxSources.length, platforms.length);
-  const sheetData = [['税源地', '平台']];
-  for (let i = 0; i < maxLen; i++) {
-    sheetData.push([taxSources[i] || '', platforms[i] || '']);
-  }
-  return sheetData;
-}
-
-// 生成任务清单sheet数据
-function generateTaskListSheet(kb) {
-  // 优先使用KB中上传的任务清单数据，否则从shangSheMap生成
-  if (kb.taskListData && kb.taskListData.length > 0) {
-    const sheetData = [['任务清单']];
-    for (const entry of kb.taskListData) {
-      sheetData.push([entry]);
-    }
-    return sheetData;
-  }
-  // 回退：从shangSheMap生成
-  const globalTasks = generateGlobalTaskList(kb);
-  const sheetData = [['任务清单']];
-  for (const task of globalTasks) {
-    sheetData.push([`${task.seq}.${task.name}(${task.shangSheId})`]);
-  }
-  return sheetData;
-}
 
 // 页面加载时更新知识库状态
 updateKBStatus();
@@ -2525,33 +1975,9 @@ function showExportStep() {
 }
 
 // 获取某个商社编号对应的所有任务（从taskListData或KB tasks）
+
 function getTasksForShangShe(shangSheId) {
-  if (!shangSheId) return [];
-  const kb = loadKB();
-  const entry = kb.shangSheMap[String(shangSheId).trim()];
-  let matchedTasks = [];
-
-  // 优先从taskListData查找
-  matchedTasks = parseTaskListEntries(kb.taskListData, shangSheId, entry);
-
-  // 回退到KB的tasks
-  if (matchedTasks.length === 0) {
-    if (entry && entry.tasks && entry.tasks.length > 0) {
-      const globalTasks = generateGlobalTaskList(kb);
-      for (const task of entry.tasks) {
-        const globalTask = globalTasks.find(t => t.name === task.name && t.shangSheId === String(shangSheId).trim());
-        matchedTasks.push({
-          seq: globalTask ? globalTask.seq : 1,
-          name: task.name,
-          shangSheId: String(shangSheId).trim(),
-          content: task.content || '',
-          fullString: `${globalTask ? globalTask.seq : 1}.${task.name}(${String(shangSheId).trim()})`
-        });
-      }
-    }
-  }
-
-  return matchedTasks;
+  return kbGetTasksForShangShe(loadKB(), shangSheId);
 }
 
 // 平台切换处理（保留兼容）
@@ -2659,35 +2085,9 @@ function applyBatchShangSheFromSelection() {
   showExportStep();
 }
 
-// 填充商社信息到行的通用函数
-// out - 当前行数组（用于读取已有值判断是否为空）
-// lookup - 商社查找结果
-// colIndex - 列索引对象 { platform, taxSource, taskList, workType }
-// setter(colIdx, value) - 写入回调（直接赋值或 updateOutputRow）
-// rowContext - 用于 inferWorkType 的上下文
+
 function fillShangSheInfoForRow(out, lookup, colIndex, setter, rowContext) {
-  if (!lookup) return;
-  const ci = colIndex || {};
-  // 填充平台
-  if (ci.platform >= 0 && !out[ci.platform] && lookup.platform) {
-    setter(ci.platform, lookup.platform);
-  }
-  // 填充税源地
-  if (ci.taxSource >= 0 && !out[ci.taxSource]) {
-    const rowPlatform = ci.platform >= 0 ? out[ci.platform] : '';
-    const taxSource = taxSourceForPlatform(rowPlatform) || lookup.taxSource;
-    if (taxSource) setter(ci.taxSource, taxSource);
-  }
-  // 填充任务清单和工种
-  if (lookup.matchedTasks.length > 0) {
-    const firstTask = lookup.matchedTasks[0];
-    if (ci.taskList >= 0 && !out[ci.taskList]) {
-      setter(ci.taskList, firstTask.fullString);
-    }
-    if (ci.workType >= 0 && !out[ci.workType]) {
-      setter(ci.workType, inferWorkType(firstTask, rowContext?.rawRow, rowContext?.typeToCol));
-    }
-  }
+  return kbFillShangSheInfoForRow(loadKB(), out, lookup, colIndex, setter, rowContext);
 }
 
 // 手动匹配商社 - 将选中的商社信息应用到所有未匹配行
@@ -2838,27 +2238,15 @@ function onNotePresetChange() {
   if (custom) custom.classList.toggle('hidden', preset !== 'custom');
 }
 
+
 function getRemarkPresetValue(rowIdx, preset) {
-  const row = state.outputRows?.[rowIdx] || [];
-  if (preset === 'filename') {
-    const meta = state.outputRowMeta?.[rowIdx] || {};
-    const rawName = meta.fileName || state.sources.filter(s => s.selected).map(s => s.fileName).filter(Boolean).join('、');
-    return rawName.replace(/\.[^.]+$/, '');
-  }
-  if (preset === 'date') {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  }
-  if (preset === 'shangshe') {
-    const shangSheIdx = (state.outputHeaders || []).indexOf('商社编号');
-    const shangSheId = shangSheIdx >= 0 ? String(row[shangSheIdx] || '').trim() : '';
-    const entry = shangSheId ? loadKB().shangSheMap[shangSheId] : null;
-    return entry?.shortName || entry?.fullName || '';
-  }
-  if (preset === 'custom') {
-    return document.getElementById('note-custom-text')?.value.trim() || '';
-  }
-  return '';
+  return kbGetRemarkPresetValue(loadKB(), preset, {
+    row: state.outputRows?.[rowIdx] || [],
+    metaFileName: (state.outputRowMeta?.[rowIdx] || {}).fileName,
+    selectedFileNames: state.sources.filter(s => s.selected).map(s => s.fileName),
+    outputHeaders: state.outputHeaders || [],
+    customText: document.getElementById('note-custom-text')?.value.trim() || '',
+  });
 }
 
 function applyBatchRemark() {
@@ -3086,10 +2474,6 @@ document.addEventListener('click', function(e) {
 });
 
 // ==================== Export Helpers ====================
-function getTodayStr() {
-  const d = new Date();
-  return `${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}`;
-}
 
 function getExportFileName(ext) {
   return getExportFileNameForTemplate(state.targetTemplate, ext);
@@ -3226,110 +2610,14 @@ async function saveBlobAsFile(blob, defaultName, description, accept) {
   return true;
 }
 
-function workbookToArray(wb) {
-  if (wb && wb.__exceljsBuffer) return wb.__exceljsBuffer;
-  return XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-}
 
-function crc32(bytes) {
-  if (!crc32.table) {
-    crc32.table = new Uint32Array(256);
-    for (let i = 0; i < 256; i++) {
-      let c = i;
-      for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      crc32.table[i] = c >>> 0;
-    }
-  }
-  let crc = 0 ^ -1;
-  for (let i = 0; i < bytes.length; i++) {
-    crc = (crc >>> 8) ^ crc32.table[(crc ^ bytes[i]) & 0xff];
-  }
-  return (crc ^ -1) >>> 0;
-}
 
-function dosDateTime(date = new Date()) {
-  const time = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2);
-  const dosDate = ((date.getFullYear() - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate();
-  return { time, date: dosDate };
-}
 
-function u16(value) {
-  const b = new Uint8Array(2);
-  b[0] = value & 0xff;
-  b[1] = (value >>> 8) & 0xff;
-  return b;
-}
 
-function u32(value) {
-  const b = new Uint8Array(4);
-  b[0] = value & 0xff;
-  b[1] = (value >>> 8) & 0xff;
-  b[2] = (value >>> 16) & 0xff;
-  b[3] = (value >>> 24) & 0xff;
-  return b;
-}
 
-function concatBytes(parts) {
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const out = new Uint8Array(total);
-  let offset = 0;
-  parts.forEach(part => {
-    out.set(part, offset);
-    offset += part.length;
-  });
-  return out;
-}
 
-function createZipBlob(files) {
-  const encoder = new TextEncoder();
-  const localParts = [];
-  const centralParts = [];
-  const { time, date } = dosDateTime();
-  let offset = 0;
-
-  files.forEach(file => {
-    const nameBytes = encoder.encode(file.name);
-    const dataBytes = file.data instanceof Uint8Array ? file.data : new Uint8Array(file.data);
-    const crc = crc32(dataBytes);
-    const localHeader = concatBytes([
-      u32(0x04034b50), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
-      u32(crc), u32(dataBytes.length), u32(dataBytes.length), u16(nameBytes.length), u16(0), nameBytes
-    ]);
-    localParts.push(localHeader, dataBytes);
-
-    const centralHeader = concatBytes([
-      u32(0x02014b50), u16(20), u16(20), u16(0x0800), u16(0), u16(time), u16(date),
-      u32(crc), u32(dataBytes.length), u32(dataBytes.length), u16(nameBytes.length),
-      u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset), nameBytes
-    ]);
-    centralParts.push(centralHeader);
-    offset += localHeader.length + dataBytes.length;
-  });
-
-  const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
-  const endRecord = concatBytes([
-    u32(0x06054b50), u16(0), u16(0), u16(files.length), u16(files.length),
-    u32(centralSize), u32(offset), u16(0)
-  ]);
-
-  return new Blob([...localParts, ...centralParts, endRecord], { type: 'application/zip' });
-}
 
 // ==================== Split Export (一源一单) ====================
-// 从行级来源元数据计算分组：byFile 按文件名分组，bySheet 按文件名+工作表名分组
-// key 带模式前缀，避免两种粒度的批次号状态互相污染
-function getSplitGroupsFromMeta(meta) {
-  const mode = state.exportMode || 'merge';
-  const map = new Map();
-  (meta || []).forEach((m, i) => {
-    const fileName = m.fileName || '未命名文件';
-    const sheetName = m.sheetName || '';
-    const key = mode === 'bySheet' ? `${mode}||${fileName}||${sheetName}` : `${mode}||${fileName}`;
-    if (!map.has(key)) map.set(key, { key, fileName, sheetName, rowIdxs: [] });
-    map.get(key).rowIdxs.push(i);
-  });
-  return [...map.values()];
-}
 
 function getSplitGroups() { return getSplitGroupsFromMeta(state.outputRowMeta); }
 
@@ -3343,11 +2631,6 @@ function getSplitGroupCounts() {
   return { byFile: files.size, bySheet: sheets.size };
 }
 
-function splitGroupLabel(g) {
-  return state.exportMode === 'bySheet'
-    ? `${g.fileName} / ${g.sheetName || '默认表'}`
-    : g.fileName;
-}
 
 // 当前是否处于有效的拆分导出模式（分组数 > 1 才有拆分意义）
 function isSplitExportActive() {
@@ -3357,40 +2640,9 @@ function isSplitExportActive() {
 }
 
 // 文件名片段清洗：去 Windows 非法字符、压缩空白、限长
-function sanitizeFileNamePart(s) {
-  return String(s || '').replace(/[\\/:*?"<>|\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
-}
 
-function getSplitFileBaseName(g, templateKey) {
-  const tplName = templateKey === 'custom' ? '自定义' : (TEMPLATES[templateKey]?.name || '转换结果');
-  const parts = [sanitizeFileNamePart(String(g.fileName || '未命名').replace(/\.[^.]+$/, '')) || '未命名'];
-  if (state.exportMode === 'bySheet' && g.sheetName) {
-    const sn = sanitizeFileNamePart(g.sheetName);
-    if (sn) parts.push(sn);
-  }
-  parts.push(tplName);
-  return parts.join('_');
-}
 
-function allocSplitFileName(g, templateKey, ext, usedNames) {
-  const base = getSplitFileBaseName(g, templateKey);
-  let name = `${base}.${ext}`, i = 2;
-  while (usedNames.has(name)) { name = `${base}(${i}).${ext}`; i++; }
-  usedNames.add(name);
-  return name;
-}
 
-// 批次号去重：buildBatchNoFromShangShe 固定以 -A 结尾，冲突时递增为 -B/-C...
-function dedupeBatchNo(batchNo, existingSet) {
-  if (!existingSet.has(batchNo)) return batchNo;
-  const m = batchNo.match(/^(.*)-([A-Z])$/);
-  const base = m ? m[1] : batchNo;
-  let idx = m ? m[2].charCodeAt(0) - 64 : 0;
-  let candidate = batchNo;
-  do { idx++; candidate = `${base}-${String.fromCharCode(64 + idx)}`; }
-  while (existingSet.has(candidate) && idx < 26);
-  return candidate;
-}
 
 // 每份单独跑商社检测（按分组过滤数据源），生成各自批次号
 function ensureSplitBatches(groups, force = false) {
@@ -3418,14 +2670,6 @@ function ensureSplitBatches(groups, force = false) {
   });
 }
 
-function rowsToCSV(headers, rows) {
-  return [headers, ...rows].map(row =>
-    row.map(cell => {
-      const s = String(cell || '');
-      return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    }).join(',')
-  ).join('\n');
-}
 
 /**
  * 拆分导出核心：每个模板 × 每个来源分组 → 一个文件（xlsx/csv），返回文件列表。
@@ -3571,146 +2815,9 @@ async function exportSelectedExcel() {
   if (saved) alert(`已打包导出 ${files.length} 个 Excel 文件`);
 }
 
-// 移步到岗: 1 header row + data rows
-function buildYidaoWorkbook(headers, rows) {
-  const wsData = [headers, ...rows];
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols'] = headers.map((h, i) => {
-    let max = h.length;
-    rows.forEach(r => { const l = String(r[i]||'').length; if (l > max) max = l; });
-    return { wch: Math.min(max + 2, 30) };
-  });
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '智能模板');
-  return wb;
-}
 
-// 身边云: 使用 ExcelJS 保留原版模板完整样式
-// Row1=instructions(merged A1:H1), Row2=batch labels, Row3=batch values, Row4=header, Row5+=data
-async function buildShenbianyunWorkbook(headers, rows, batchNo = '') {
-  const amountIdx = headers.indexOf('付款金额（元，必填）');
-  const totalAmount = rows.reduce((sum, row) => sum + (parseFloat(String(row[amountIdx] || '').replace(/,/g, '')) || 0), 0);
 
-  const showBatchInfo = state.sbyShowBatchInfo;
-  const plainAmount = state.sbyPlainAmount;
-  const amtFmt = plainAmount ? '#,##0.00' : '¥#,##0.00';
 
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('个人银行账户批量付款模板');
-
-  // 列宽（与原版模板一致）
-  const colWidths = [20.15, 34.0, 26.08, 20.15, 20.15, 20.15, 14.39, 22.45];
-  colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
-
-  // 各列数字格式（金额列根据选项切换货币/纯数字）
-  const colNumFmts = ['@', '@', '@', amtFmt, amtFmt, '@', amtFmt, amtFmt];
-
-  // Row 1: 说明文字（合并 A1:H1）
-  ws.getRow(1).height = 121;
-  ws.mergeCells('A1:H1');
-  const cellA1 = ws.getCell('A1');
-  cellA1.value = '单批次最大支持12000条订单。\n商户订单号纯数字并且唯一，禁止重复。\n付款金额保留两位小数，四舍五入。\n备注字段最大限制20字，银行备注展示限制具体以银行为准。\n付款文件名称或备注存在以下字段会导致文件上传失败：工资、薪酬、提现、薪、补贴、分红、奖金、返现、劳务费、分润、备用金、¥、$\n银行卡号建议使用一类户，如使用二类户日限额导致交易退汇，需T+8个工作日退回';
-  cellA1.font = { name: '微软雅黑', size: 12, color: { argb: 'FFFF0000' } };
-  cellA1.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
-  cellA1.numFmt = '@';
-
-  // Row 2: 批次标签（始终保留，A2/B2/C2 有样式，与原版一致）
-  const batchLabels = ['商户批次号（非必填）', '总笔数（非必填）', '总金额（元，非必填）'];
-  batchLabels.forEach((label, i) => {
-    const cell = ws.getCell(2, i + 1);
-    cell.value = label;
-    cell.font = { name: '微软雅黑', size: 12, color: { argb: 'FF9C6500' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEB9C' } };
-    cell.alignment = { horizontal: 'center', vertical: 'middle' };
-    cell.numFmt = '@';
-  });
-
-  // Row 3: 批次值（始终保留结构；B3/C3 根据选项决定是否填入数字）
-  const cellA3 = ws.getCell('A3');
-  cellA3.value = batchNo || '';
-  const cellB3 = ws.getCell('B3');
-  cellB3.value = showBatchInfo ? (rows.length || '') : '';
-  const cellC3 = ws.getCell('C3');
-  cellC3.value = (showBatchInfo && totalAmount) ? Math.round(totalAmount * 100) / 100 : '';
-  cellC3.font = { name: '微软雅黑', size: 12 };
-  cellC3.alignment = { horizontal: 'center', vertical: 'middle' };
-  cellC3.numFmt = amtFmt;
-
-  // Row 4: 表头（与原版一致的绿色样式）
-  headers.forEach((header, i) => {
-    const cell = ws.getCell(4, i + 1);
-    cell.value = header;
-    cell.font = { name: '微软雅黑', size: 12, color: { argb: 'FF006100' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFC6EFCE' } };
-    cell.alignment = { horizontal: 'center', vertical: 'middle' };
-    cell.numFmt = colNumFmts[i] || '@';
-  });
-
-  // Row 5+: 数据行
-  const dataStartRow = 5;
-  rows.forEach((row, rowIdx) => {
-    const excelRow = rowIdx + dataStartRow;
-    row.forEach((val, colIdx) => {
-      const cell = ws.getCell(excelRow, colIdx + 1);
-      cell.font = { name: '微软雅黑', size: 12 };
-      cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      cell.numFmt = colNumFmts[colIdx] || '@';
-      if (colIdx === amountIdx && val !== '' && !isNaN(parseFloat(String(val).replace(/,/g, '')))) {
-        const n = parseFloat(String(val).replace(/,/g, ''));
-        cell.value = Math.round(n * 100) / 100;
-      } else {
-        cell.value = val;
-      }
-    });
-  });
-
-  const buffer = await wb.xlsx.writeBuffer();
-  return { __exceljsBuffer: buffer };
-}
-
-// 云杉公司: 从头生成费用明细 + 动态生成配置表和任务清单
-function buildYouyiWorkbook(headers, rows) {
-  const kb = loadKB();
-  const wb = XLSX.utils.book_new();
-
-  // 1. 费用明细 sheet：表头 + 数据行
-  const wsData = [headers, ...rows];
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols'] = headers.map((h, i) => {
-    let max = h.length;
-    rows.forEach(r => { const l = String(r[i]||'').length; if (l > max) max = l; });
-    return { wch: Math.min(max + 2, 30) };
-  });
-  XLSX.utils.book_append_sheet(wb, ws, '费用明细');
-
-  // 2. 配置表 sheet：从知识库动态生成
-  const configData = generateConfigSheet(kb);
-  const cfgWs = XLSX.utils.aoa_to_sheet(configData);
-  cfgWs['!cols'] = [{ wch: 20 }, { wch: 40 }];
-  XLSX.utils.book_append_sheet(wb, cfgWs, '配置表');
-
-  // 3. 任务清单 sheet：从知识库动态生成
-  const taskData = generateTaskListSheet(kb);
-  const taskWs = XLSX.utils.aoa_to_sheet(taskData);
-  taskWs['!cols'] = [{ wch: 40 }];
-  XLSX.utils.book_append_sheet(wb, taskWs, '任务清单');
-
-  return wb;
-}
-
-// Generic: just headers + data
-function buildGenericWorkbook(headers, rows) {
-  const wsData = [headers, ...rows];
-  const ws = XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols'] = headers.map((h, i) => {
-    let max = h.length;
-    rows.forEach(r => { const l = String(r[i]||'').length; if (l > max) max = l; });
-    return { wch: Math.min(max + 2, 30) };
-  });
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, '数据');
-  return wb;
-}
 
 async function exportCSV() {
   if (isSplitExportActive()) { await exportSplitCSV(); return; }

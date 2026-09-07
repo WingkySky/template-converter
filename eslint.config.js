@@ -10,6 +10,8 @@ export default tseslint.config(
     files: ['src/**/*.ts'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
+      // 逐字保真搬移：原签名中的未用参数（如 analyzeSheet 的 monthHint/yearHint）不得改名
+      '@typescript-eslint/no-unused-vars': 'warn',
     },
   },
   {

@@ -2,5 +2,27 @@
   "name": "template-converter",
   "version": "1.0.0",
   "description": "灵工发放模版转换工具",
-  "private": true
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "compare": "node tests/tools/compare.mjs"
+  },
+  "dependencies": {
+    "exceljs": "4.4.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.1/xlsx-0.20.1.tgz"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "eslint": "^9.18.0",
+    "iconv-lite": "^0.7.3",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.20.0",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5"
+  }
 }

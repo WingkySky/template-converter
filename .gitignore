@@ -37,3 +37,11 @@ verify*.js
 *.docx
 *.doc
 *.pdf
+
+# 测试基线（回归安全网）必须入库，覆盖上方的样例文件忽略规则
+!tests/fixtures
+!tests/fixtures/*.xlsx
+!tests/fixtures/*.csv
+!tests/fixtures/baseline
+!tests/fixtures/baseline/**
+dist/

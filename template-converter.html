@@ -375,6 +375,12 @@ const state = {
   // 身边云导出选项
   sbyShowBatchInfo: false,   // 是否显示总笔数和总金额行（默认不显示）
   sbyPlainAmount: true,      // 金额使用纯数字格式（默认纯数字，不带¥符号）
+  // 导出模式: 'merge' 合并为一份 | 'byFile' 按文件拆分 | 'bySheet' 按数据表拆分
+  exportMode: 'merge',
+  // 拆分模式下每份的商社/批次号: { [groupKey]: { batchNo, shangSheId, shangSheName } }
+  splitBatches: {},
+  // 渲染拆分批次面板时暂存的分组列表（供下拉框回调定位分组）
+  splitGroupList: [],
 };
 
 function updateOutputRow(rowIdx, colIdx, value) {
@@ -1214,9 +1220,10 @@ function lookupShangSheByName(name) {
   return null;
 }
 
-function detectSourceClientInfo(sourcesData) {
+function detectSourceClientInfo(sourcesData, sourcesOverride) {
+  const scanSources = sourcesOverride || state.sources.filter(s => s.selected);
   let detectedClientName = '';
-  for (const src of state.sources.filter(s => s.selected)) {
+  for (const src of scanSources) {
     const allRows = src.rows;
     for (let ri = 0; ri < allRows.length; ri++) {
       const row = allRows[ri] || [];
@@ -1250,7 +1257,7 @@ function detectSourceClientInfo(sourcesData) {
   });
 
   let detectedTaxId = '';
-  for (const src of state.sources.filter(s => s.selected)) {
+  for (const src of scanSources) {
     const allRows = src.rows;
     for (let ri = 0; ri < allRows.length; ri++) {
       const row = allRows[ri] || [];
@@ -1298,7 +1305,7 @@ function getShangSheIdFromLookup(lookup) {
   return '';
 }
 
-function detectBestShangSheMatch(sourcesData) {
+function detectBestShangSheMatch(sourcesData, sourcesOverride) {
   let mappedShangSheId = '';
   sourcesData.forEach(({ dataRows, typeToCol }) => {
     if (mappedShangSheId) return;
@@ -1314,7 +1321,7 @@ function detectBestShangSheMatch(sourcesData) {
     }
   }
 
-  const { clientName, taxId } = detectSourceClientInfo(sourcesData);
+  const { clientName, taxId } = detectSourceClientInfo(sourcesData, sourcesOverride);
   let bestLookup = taxId ? lookupShangSheByTaxId(taxId) : null;
   let candidates = [];
 
@@ -2925,7 +2932,7 @@ function showExportStep() {
   let allTaxSources = [];
   let shangSheFullList = [];
   let shangSheCandidates = [];
-  if (isYouyi || supportsBatchNo) {
+  if (isYouyi || supportsBatchNo || getSelectedTemplates().includes('shenbianyun')) {
     const kb = loadKB();
     const config = getConfigLists(kb);
     if (isYouyi) {
@@ -3031,8 +3038,68 @@ function showExportStep() {
     kbMatchHTML = `<div class="status-msg success">✅ 知识库匹配：全部 ${rows.length} 行已成功匹配</div>`;
   }
 
+  // ===== 拆分导出（一源一单）：模式选择 + 每份批次号 =====
+  const splitCounts = getSplitGroupCounts();
+  const splitActive = isSplitExportActive();
+  const showSplitModePanel = rows.length > 0 && (splitCounts.byFile > 1 || splitCounts.bySheet > 1);
+  let splitModeHTML = '';
+  if (showSplitModePanel) {
+    const mode = state.exportMode || 'merge';
+    const radio = (value, label, count) => {
+      const disabled = value !== 'merge' && count <= 1;
+      return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:${disabled?'not-allowed':'pointer'};${disabled?'opacity:0.45;':''}">
+        <input type="radio" name="export-mode" value="${value}" ${mode===value?'checked':''} ${disabled?'disabled':''} onchange="onExportModeChange('${value}')" style="accent-color:var(--accent);">
+        ${label}${value!=='merge'&&count>1?`（${count} 份）`:''}
+      </label>`;
+    };
+    const activeGroups = splitActive ? getSplitGroups().length : 0;
+    splitModeHTML = `
+    <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:8px;">📦 导出模式</div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;">
+        ${radio('merge', '合并为一份', 0)}
+        ${radio('byFile', '按文件拆分', splitCounts.byFile)}
+        ${radio('bySheet', '按数据表拆分', splitCounts.bySheet)}
+      </div>
+      ${splitActive ? `<div style="font-size:12px;color:var(--text2);margin-top:8px;">将生成 <strong style="color:var(--accent2);">${activeGroups}</strong> 个文件（与来源一一对应），打包为 ZIP 下载；命名规则：<strong>源文件名${state.exportMode==='bySheet'?'_工作表名':''}_模板名.xlsx</strong>。</div>` : ''}
+    </div>`;
+  }
+
+  let splitBatchHTML = '';
+  const showSplitBatchPanel = splitActive && getSelectedTemplates().includes('shenbianyun');
+  if (showSplitBatchPanel) {
+    const groups = getSplitGroups();
+    ensureSplitBatches(groups);
+    state.splitGroupList = groups;
+    splitBatchHTML = `
+    <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
+      <div style="font-size:13px;font-weight:600;margin-bottom:4px;">🏷️ 每份批次号（拆分模式）</div>
+      <div style="font-size:12px;color:var(--text2);margin-bottom:6px;">每份已按来源单独检测商社并生成批次号（同一商社多份时自动 -A/-B 区分），可搜索更换商社或直接修改批次号。</div>
+      ${groups.map((g, gi) => {
+        const b = state.splitBatches[g.key] || {};
+        const status = b.shangSheName
+          ? `<span style="color:var(--green);">✓ ${escapeHTML(b.shangSheName)}</span>`
+          : '<span style="color:var(--orange);">未匹配到商社，可搜索选择</span>';
+        return `
+        <div style="display:grid;grid-template-columns:minmax(140px,1.1fr) minmax(200px,1.5fr) minmax(170px,1fr);gap:10px;align-items:center;padding:8px 0;${gi>0?'border-top:1px solid var(--border);':''}">
+          <div style="min-width:0;" title="${escapeHTML(splitGroupLabel(g))}（${g.rowIdxs.length} 行）">
+            <div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHTML(splitGroupLabel(g))}</div>
+            <div style="font-size:11px;color:var(--text2);">${g.rowIdxs.length} 行</div>
+          </div>
+          <div style="min-width:0;">
+            <div style="font-size:11px;margin-bottom:3px;">${status}</div>
+            ${createShangSheSearchHTML('split' + gi, '搜索商社（编号/名称/税号）...', b.shangSheName, b.shangSheId)}
+          </div>
+          <input data-group-key="${escapeHTML(g.key)}" value="${escapeHTML(b.batchNo || '')}" placeholder="批次号（可修改）"
+            style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;outline:none;"
+            oninput="onSplitBatchNoChange(this)">
+        </div>`;
+      }).join('')}
+    </div>`;
+  }
+
   let batchNoHTML = '';
-  if (supportsBatchNo) {
+  if (supportsBatchNo && !splitActive) {
     const candidateHint = shangSheCandidates.length > 0
       ? `<div style="font-size:12px;color:var(--orange);margin-bottom:6px;">💡 已根据客户信息缩小范围，找到 ${shangSheCandidates.length} 个候选商社（也可搜索其他商社）</div>`
       : '';
@@ -3150,15 +3217,20 @@ function showExportStep() {
         ${selectedExportTemplates.map(k => `<button class="btn ${k === state.targetTemplate ? 'btn-primary' : 'btn-secondary'} btn-sm" onclick="switchPreviewTemplate('${k}')">${TEMPLATES[k].icon} ${TEMPLATES[k].name}</button>`).join('')}
       </div>`
     : '';
+  const splitGroupCount = splitActive ? getSplitGroups().length : 0;
   const multiExportHTML = selectedExportTemplates.length > 1
-    ? `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="exportSelectedExcel()">📦 打包导出 ZIP（${selectedExportTemplates.length} 个 Excel）</button>`
+    ? (splitActive
+      ? `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="exportSelectedExcel()">📦 拆分打包导出（${selectedExportTemplates.length} 模板 × ${splitGroupCount} 来源 = ${selectedExportTemplates.length * splitGroupCount} 个 Excel）</button>`
+      : `<button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" onclick="exportSelectedExcel()">📦 打包导出 ZIP（${selectedExportTemplates.length} 个 Excel）</button>`)
     : '';
 
   container.innerHTML = `
     <div class="status-msg success">✅ 转换完成 — ${tplName}（${rows.length} 行）</div>
     ${selectedExportTemplates.length > 1 ? `<div class="status-msg info">本次已选择：${selectedExportTemplates.map(k => TEMPLATES[k].name).join('、')}。当前表格预览为 ${tplName}。</div>` : ''}
     ${previewSwitchHTML}
+    ${splitModeHTML}
     ${kbMatchHTML}
+    ${splitBatchHTML}
     ${batchNoHTML}
     ${sbyOptionsHTML}
     ${manualShangSheHTML}
@@ -3171,13 +3243,16 @@ function showExportStep() {
     </div>
     <div class="btn-row">
       ${multiExportHTML}
-      <button class="btn btn-green" style="flex:1;padding:12px;font-size:15px;" onclick="exportExcel()">📥 导出 Excel（可选保存位置）</button>
-      <button class="btn btn-secondary" onclick="exportCSV()">📥 导出 CSV</button>
+      ${splitActive
+        ? `<button class="btn btn-green" style="flex:1;padding:12px;font-size:15px;" onclick="exportExcel()">📦 拆分导出 ZIP（${splitGroupCount} 份 Excel）</button>
+           <button class="btn btn-secondary" onclick="exportCSV()">📦 拆分导出 CSV（${splitGroupCount} 份）</button>`
+        : `<button class="btn btn-green" style="flex:1;padding:12px;font-size:15px;" onclick="exportExcel()">📥 导出 Excel（可选保存位置）</button>
+           <button class="btn btn-secondary" onclick="exportCSV()">📥 导出 CSV</button>`}
       <button class="btn btn-secondary" onclick="goBack('step-export')">⬅️ 返回</button>
     </div>`;
 
   // 设置搜索下拉框所需的数据（存入 state 对象）
-  if (isYouyi || supportsBatchNo) {
+  if (isYouyi || supportsBatchNo || showSplitBatchPanel) {
     // 设置商社列表数据
     state.shangSheFullList = shangSheFullList;
     state.shangSheCandidates = shangSheCandidates;
@@ -3294,6 +3369,20 @@ function applyPlatformToAll() {
 function onBatchNoChange(inputEl) {
   state.batchNo = String(inputEl.value || '').trim();
   cacheCurrentTemplateOutput();
+}
+
+function onExportModeChange(mode) {
+  state.exportMode = mode;
+  if (mode !== 'merge' && getSelectedTemplates().includes('shenbianyun')) {
+    ensureSplitBatches(getSplitGroups());
+  }
+  showExportStep();
+}
+
+function onSplitBatchNoChange(inputEl) {
+  const key = inputEl.dataset.groupKey;
+  if (!key || !state.splitBatches[key]) return;
+  state.splitBatches[key].batchNo = String(inputEl.value || '').trim();
 }
 
 function onSbyOptionChange() {
@@ -3663,6 +3752,24 @@ function selectShangShe(id, label, prefix) {
   if (input) input.value = label;
   if (hidden) hidden.value = id;
   if (dropdown) dropdown.style.display = 'none';
+  // 拆分模式：为对应分组更换商社并重新生成该份批次号
+  if (prefix.startsWith('split') && id) {
+    const gi = Number(prefix.slice(5));
+    const g = (state.splitGroupList || [])[gi];
+    if (g) {
+      const lookup = lookupShangShe(id);
+      const existing = new Set((state.splitGroupList || [])
+        .filter(x => x.key !== g.key)
+        .map(x => state.splitBatches[x.key]?.batchNo).filter(Boolean));
+      state.splitBatches[g.key] = {
+        batchNo: dedupeBatchNo(buildBatchNoFromShangShe(lookup), existing),
+        shangSheId: id,
+        shangSheName: lookup?.shortName || lookup?.fullName || ''
+      };
+      showExportStep();
+    }
+    return;
+  }
   // 选择商社后立即预览批次号（仅 batch 前缀时）
   if (prefix === 'batch' && id && batchInput) {
     const lookup = lookupShangShe(id);
@@ -3966,8 +4073,198 @@ function createZipBlob(files) {
   return new Blob([...localParts, ...centralParts, endRecord], { type: 'application/zip' });
 }
 
+// ==================== Split Export (一源一单) ====================
+// 从行级来源元数据计算分组：byFile 按文件名分组，bySheet 按文件名+工作表名分组
+// key 带模式前缀，避免两种粒度的批次号状态互相污染
+function getSplitGroupsFromMeta(meta) {
+  const mode = state.exportMode || 'merge';
+  const map = new Map();
+  (meta || []).forEach((m, i) => {
+    const fileName = m.fileName || '未命名文件';
+    const sheetName = m.sheetName || '';
+    const key = mode === 'bySheet' ? `${mode}||${fileName}||${sheetName}` : `${mode}||${fileName}`;
+    if (!map.has(key)) map.set(key, { key, fileName, sheetName, rowIdxs: [] });
+    map.get(key).rowIdxs.push(i);
+  });
+  return [...map.values()];
+}
+
+function getSplitGroups() { return getSplitGroupsFromMeta(state.outputRowMeta); }
+
+function getSplitGroupCounts() {
+  const files = new Set(), sheets = new Set();
+  (state.outputRowMeta || []).forEach(m => {
+    const fn = m.fileName || '未命名文件';
+    files.add(fn);
+    sheets.add(`${fn}||${m.sheetName || ''}`);
+  });
+  return { byFile: files.size, bySheet: sheets.size };
+}
+
+function splitGroupLabel(g) {
+  return state.exportMode === 'bySheet'
+    ? `${g.fileName} / ${g.sheetName || '默认表'}`
+    : g.fileName;
+}
+
+// 当前是否处于有效的拆分导出模式（分组数 > 1 才有拆分意义）
+function isSplitExportActive() {
+  if ((state.exportMode || 'merge') === 'merge') return false;
+  const counts = getSplitGroupCounts();
+  return (state.exportMode === 'byFile' ? counts.byFile : counts.bySheet) > 1;
+}
+
+// 文件名片段清洗：去 Windows 非法字符、压缩空白、限长
+function sanitizeFileNamePart(s) {
+  return String(s || '').replace(/[\\/:*?"<>|\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
+}
+
+function getSplitFileBaseName(g, templateKey) {
+  const tplName = templateKey === 'custom' ? '自定义' : (TEMPLATES[templateKey]?.name || '转换结果');
+  const parts = [sanitizeFileNamePart(String(g.fileName || '未命名').replace(/\.[^.]+$/, '')) || '未命名'];
+  if (state.exportMode === 'bySheet' && g.sheetName) {
+    const sn = sanitizeFileNamePart(g.sheetName);
+    if (sn) parts.push(sn);
+  }
+  parts.push(tplName);
+  return parts.join('_');
+}
+
+function allocSplitFileName(g, templateKey, ext, usedNames) {
+  const base = getSplitFileBaseName(g, templateKey);
+  let name = `${base}.${ext}`, i = 2;
+  while (usedNames.has(name)) { name = `${base}(${i}).${ext}`; i++; }
+  usedNames.add(name);
+  return name;
+}
+
+// 批次号去重：buildBatchNoFromShangShe 固定以 -A 结尾，冲突时递增为 -B/-C...
+function dedupeBatchNo(batchNo, existingSet) {
+  if (!existingSet.has(batchNo)) return batchNo;
+  const m = batchNo.match(/^(.*)-([A-Z])$/);
+  const base = m ? m[1] : batchNo;
+  let idx = m ? m[2].charCodeAt(0) - 64 : 0;
+  let candidate = batchNo;
+  do { idx++; candidate = `${base}-${String.fromCharCode(64 + idx)}`; }
+  while (existingSet.has(candidate) && idx < 26);
+  return candidate;
+}
+
+// 每份单独跑商社检测（按分组过滤数据源），生成各自批次号
+function ensureSplitBatches(groups, force = false) {
+  if (!state.splitBatches) state.splitBatches = {};
+  const sourcesData = state.mappingState?.sourcesData || [];
+  // 去重范围仅限当前这批分组的批次号
+  const existing = new Set(groups.map(g => state.splitBatches[g.key]?.batchNo).filter(Boolean));
+  groups.forEach(g => {
+    if (!force && state.splitBatches[g.key]) return;
+    const groupData = sourcesData.filter(sd => {
+      if ((sd.source?.fileName || '') !== g.fileName) return false;
+      if (state.exportMode === 'bySheet') return (sd.source?.sheetName || '') === (g.sheetName || '');
+      return true;
+    });
+    const groupSources = groupData.map(sd => sd.source).filter(Boolean);
+    const match = detectBestShangSheMatch(groupData, groupSources);
+    const lookup = match?.lookup || null;
+    const batchNo = lookup ? dedupeBatchNo(buildBatchNoFromShangShe(lookup), existing) : '';
+    if (batchNo) existing.add(batchNo);
+    state.splitBatches[g.key] = {
+      batchNo,
+      shangSheId: lookup ? (match.id || '') : '',
+      shangSheName: lookup ? (lookup.shortName || lookup.fullName || '') : ''
+    };
+  });
+}
+
+function rowsToCSV(headers, rows) {
+  return [headers, ...rows].map(row =>
+    row.map(cell => {
+      const s = String(cell || '');
+      return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(',')
+  ).join('\n');
+}
+
+/**
+ * 拆分导出核心：每个模板 × 每个来源分组 → 一个文件（xlsx/csv），返回文件列表。
+ * templateKeys 为空时返回空数组；调用方负责打 ZIP。
+ */
+async function buildSplitFilesForTemplates(templateKeys, ext) {
+  const files = [];
+  if (!templateKeys.length) return files;
+  cacheCurrentTemplateOutput();
+  const currentTemplate = state.targetTemplate;
+  if (templateKeys.includes('shenbianyun')) ensureSplitBatches(getSplitGroups());
+  const usedNames = new Set();
+
+  for (const templateKey of templateKeys) {
+    let out;
+    if (templateKey === currentTemplate) {
+      out = {
+        outputHeaders: state.outputHeaders,
+        outputRows: state.outputRows,
+        outputRowMeta: state.outputRowMeta,
+        sbyShowBatchInfo: state.sbyShowBatchInfo,
+        sbyPlainAmount: state.sbyPlainAmount,
+      };
+    } else {
+      if (!state.templateOutputs?.[templateKey]) {
+        state.targetTemplate = templateKey;
+        generateOutput();
+      }
+      out = state.templateOutputs?.[templateKey];
+    }
+    if (!out?.outputHeaders || !out?.outputRows) continue;
+
+    const groups = getSplitGroupsFromMeta(out.outputRowMeta);
+    for (const g of groups) {
+      const rows = g.rowIdxs.map(i => out.outputRows[i]).filter(Boolean);
+      if (!rows.length) continue;
+      let data;
+      if (ext === 'csv') {
+        data = new TextEncoder().encode('\uFEFF' + rowsToCSV(out.outputHeaders, rows));
+      } else {
+        state.sbyShowBatchInfo = out.sbyShowBatchInfo ?? false;
+        state.sbyPlainAmount = out.sbyPlainAmount ?? true;
+        const batchNo = templateKey === 'shenbianyun' ? (state.splitBatches?.[g.key]?.batchNo || '') : '';
+        const wb = await buildWorkbookForTemplate(templateKey, out.outputHeaders, rows, batchNo);
+        data = workbookToArray(wb);
+      }
+      files.push({ name: allocSplitFileName(g, templateKey, ext, usedNames), data });
+    }
+  }
+
+  state.targetTemplate = currentTemplate;
+  restoreTemplateOutput(currentTemplate);
+  showExportStep();
+  return files;
+}
+
+async function downloadSplitZip(files, kind) {
+  if (!files.length) { alert('没有可导出的数据'); return; }
+  const zipBlob = createZipBlob(files);
+  const saved = await saveBlobAsFile(
+    zipBlob,
+    `拆分转换结果_${getTodayStr()}.zip`,
+    'ZIP 压缩包',
+    { 'application/zip': ['.zip'] }
+  );
+  if (saved) alert(`已拆分导出 ${files.length} 个${kind === 'csv' ? ' CSV' : ' Excel'}文件（ZIP 打包，与来源一一对应）`);
+}
+
+async function exportSplitExcel() {
+  const files = await buildSplitFilesForTemplates([state.targetTemplate].filter(Boolean), 'xlsx');
+  await downloadSplitZip(files, 'xlsx');
+}
+
+async function exportSplitCSV() {
+  const files = await buildSplitFilesForTemplates([state.targetTemplate].filter(Boolean), 'csv');
+  await downloadSplitZip(files, 'csv');
+}
+
 // ==================== Excel Export (Template-Preserving) ====================
 async function exportExcel() {
+  if (isSplitExportActive()) { await exportSplitExcel(); return; }
   const headers = state.outputHeaders;
   const rows = state.outputRows;
   const fileName = getExportFileName('xlsx');
@@ -3975,9 +4272,9 @@ async function exportExcel() {
   return await saveWorkbook(wb, fileName);
 }
 
-async function buildWorkbookForTemplate(templateKey, headers, rows) {
+async function buildWorkbookForTemplate(templateKey, headers, rows, batchNoOverride) {
   if (templateKey === 'yidao') return buildYidaoWorkbook(headers, rows);
-  if (templateKey === 'shenbianyun') return await buildShenbianyunWorkbook(headers, rows, getBatchNoForTemplate(templateKey));
+  if (templateKey === 'shenbianyun') return await buildShenbianyunWorkbook(headers, rows, batchNoOverride != null ? batchNoOverride : getBatchNoForTemplate(templateKey));
   if (templateKey === 'youyi') return buildYouyiWorkbook(headers, rows);
   return buildGenericWorkbook(headers, rows);
 }
@@ -3986,6 +4283,11 @@ async function exportSelectedExcel() {
   const selectedTemplates = getSelectedTemplates().filter(k => k !== 'custom');
   if (selectedTemplates.length <= 1) {
     await exportExcel();
+    return;
+  }
+  if (isSplitExportActive()) {
+    const files = await buildSplitFilesForTemplates(selectedTemplates, 'xlsx');
+    await downloadSplitZip(files, 'xlsx');
     return;
   }
 
@@ -4169,14 +4471,9 @@ function buildGenericWorkbook(headers, rows) {
 }
 
 async function exportCSV() {
-  const BOM = '\uFEFF';
-  const csv = [state.outputHeaders, ...state.outputRows].map(row =>
-    row.map(cell => {
-      const s = String(cell || '');
-      return (s.includes(',') || s.includes('"') || s.includes('\n')) ? '"' + s.replace(/"/g, '""') + '"' : s;
-    }).join(',')
-  ).join('\n');
-  await saveCSV(BOM + csv, getExportFileName('csv'));
+  if (isSplitExportActive()) { await exportSplitCSV(); return; }
+  const csv = rowsToCSV(state.outputHeaders, state.outputRows);
+  await saveCSV('\uFEFF' + csv, getExportFileName('csv'));
 }
 
 // ==================== Reset ====================
@@ -4186,6 +4483,7 @@ function resetAll() {
     mappingState: null, targetTemplate: null, selectedTemplates: [], templateOutputs: {}, customFields: [],
     outputRows: null, outputHeaders: null, outputRowMeta: [], selectedNoteRows: [], previewRowLimit: DEFAULT_PREVIEW_ROW_LIMIT, templateFiles: {}, cleanCount: 0,
     unmatchedRows: [], shangSheCandidates: [],
+    exportMode: 'merge', splitBatches: {}, splitGroupList: [],
   });
   ['accum-indicator','step-mapping','step-template','step-export'].forEach(id =>
     document.getElementById(id).classList.add('hidden'));

@@ -1,7 +1,7 @@
 // 导出控件面板渲染串与导出模式切换单测（node 环境，依赖经 setExportControlsDeps 注入桩）
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  setExportControlsDeps, renderExportControls, onExportModeChange,
+  setExportControlsDeps, renderExportControls, onExportModeChange, onSplitNamingRuleChange,
   type ExportControlsDeps,
 } from '../../../src/ui/export/controls';
 import type { SplitGroup } from '../../../src/core/export/split-core';
@@ -27,6 +27,7 @@ function resetState() {
     splitGroupList: [], splitBatches: {},
     batchNo: '', batchShangSheId: '', batchShangSheName: '',
     shangSheCandidates: [], sbyShowBatchInfo: false, sbyPlainAmount: true,
+    splitNamingRule: 'compact' as const,
   });
 }
 
@@ -109,6 +110,90 @@ describe('renderExportControls', () => {
     state.targetTemplate = 'custom';
     const html = renderExportControls();
     expect(html.trim()).toBe('');
+  });
+});
+
+describe('拆分命名规则', () => {
+  const groups: SplitGroup[] = [
+    { key: 'bySheet||发放表.xlsx||S1', fileName: '发放表.xlsx', sheetName: 'S1', rowIdxs: [0] },
+    { key: 'bySheet||发放表.xlsx||S2', fileName: '发放表.xlsx', sheetName: 'S2', rowIdxs: [1] },
+  ];
+
+  function splitDeps(showExportStep?: ReturnType<typeof vi.fn>): ExportControlsDeps {
+    return makeDeps({
+      showExportStep: showExportStep || vi.fn(),
+      getSelectedTemplates: () => ['shenbianyun'],
+      getSplitGroups: () => groups,
+      getSplitGroupCounts: () => ({ byFile: 1, bySheet: 2 }),
+      isSplitExportActive: () => true,
+    });
+  }
+
+  function setupSplit() {
+    setExportControlsDeps(splitDeps());
+    state.targetTemplate = 'shenbianyun';
+    state.exportMode = 'bySheet';
+  }
+
+  beforeEach(() => {
+    resetState();
+    state.outputHeaders = ['平台', '备注'];
+    state.outputRows = [['a', ''], ['b', 'x']];
+  });
+  afterEach(() => { resetState(); });
+
+  it('默认精简规则：渲染命名规则下拉与形如提示（单文件多表 → 工作表名.xlsx）', () => {
+    setupSplit();
+    const html = renderExportControls();
+    expect(html).toContain('data-action="onSplitNamingRuleChange"');
+    expect(html).toContain('value="compact" selected');
+    expect(html).toContain('批次号+精简');
+    expect(html).toContain('文件名形如 <strong style="color:var(--text);">工作表名.xlsx</strong>');
+    expect(html).toContain('（自动省略与整批相同的段）');
+  });
+
+  it('批次号规则：提示批次号形如并带回退说明；批次面板逐份显示文件名预览', () => {
+    setupSplit();
+    state.splitNamingRule = 'batchno';
+    state.splitBatches[groups[0].key] = { batchNo: '20260908SLSM-A', shangSheId: 'x', shangSheName: '某某' };
+    state.splitBatches[groups[1].key] = { batchNo: '20260908SLSM-B', shangSheId: 'x', shangSheName: '某某' };
+    const html = renderExportControls();
+    expect(html).toContain('value="batchno" selected');
+    expect(html).toContain('文件名形如 <strong style="color:var(--text);">批次号.xlsx</strong>');
+    expect(html).toContain('（无批次号的份自动回退精简命名）');
+    expect(html).toContain('data-split-preview="bySheet||发放表.xlsx||S1"');
+    expect(html).toContain('文件名：20260908SLSM-A.xlsx');
+    expect(html).toContain('文件名：20260908SLSM-B.xlsx');
+  });
+
+  it('完整规则：提示恢复源文件名_工作表名_模板名形如', () => {
+    setupSplit();
+    state.splitNamingRule = 'full';
+    const html = renderExportControls();
+    expect(html).toContain('value="full" selected');
+    expect(html).toContain('文件名形如 <strong style="color:var(--text);">源文件名_工作表名_身边云.xlsx</strong>');
+  });
+});
+
+describe('onSplitNamingRuleChange', () => {
+  let showExportStep: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    resetState();
+    showExportStep = vi.fn();
+    setExportControlsDeps(makeDeps({ showExportStep }));
+  });
+  afterEach(() => { resetState(); });
+
+  it('写 state.splitNamingRule 并触发重渲染；非法值不改 state', () => {
+    onSplitNamingRuleChange({ value: 'batchno' } as HTMLSelectElement);
+    expect(state.splitNamingRule).toBe('batchno');
+    expect(showExportStep).toHaveBeenCalledTimes(1);
+    onSplitNamingRuleChange({ value: 'batchno-compact' } as HTMLSelectElement);
+    expect(state.splitNamingRule).toBe('batchno-compact');
+    onSplitNamingRuleChange({ value: 'weird' } as unknown as HTMLSelectElement);
+    expect(state.splitNamingRule).toBe('batchno-compact');
+    expect(showExportStep).toHaveBeenCalledTimes(3);
   });
 });
 

@@ -29,8 +29,10 @@ import { getTodayStr } from '../../core/export/naming';
 import {
   getSplitGroupsFromMeta as getSplitGroupsFromMetaCore,
   splitGroupLabel as splitGroupLabelCore,
+  getSplitFileBaseName as getSplitFileBaseNameCore,
   allocSplitFileName as allocSplitFileNameCore,
   type SplitGroup,
+  type SplitNamingOptions,
 } from '../../core/export/split-core';
 import { workbookToArray, createZipBlob, type ZipEntry } from '../../core/export/zip';
 import { dedupeBatchNo, buildBatchNoFromShangShe, kbComputeBatchShangShe } from '../../core/kb/batch';
@@ -97,8 +99,24 @@ function splitTplName(templateKey: string): string {
 export function splitGroupLabelBridge(g: Parameters<typeof splitGroupLabelCore>[0]): string {
   return splitGroupLabelCore(g, state.exportMode);
 }
-function allocSplitFileName(g: SplitGroup, templateKey: string, ext: string, usedNames: Set<string>): string {
-  return allocSplitFileNameCore(g, ext, usedNames, splitTplName(templateKey), state.exportMode);
+function allocSplitFileName(g: SplitGroup, templateKey: string, ext: string, usedNames: Set<string>, naming?: SplitNamingOptions): string {
+  return allocSplitFileNameCore(g, ext, usedNames, splitTplName(templateKey), state.exportMode, {
+    ...naming,
+    batchNo: state.splitBatches?.[g.key]?.batchNo || '',
+  });
+}
+// 命名规则上下文从 state 组装（compact/batchno 的段取舍逻辑在 core）
+function splitNamingOptions(groups: SplitGroup[], multiTemplate: boolean): SplitNamingOptions {
+  return { rule: state.splitNamingRule || 'compact', multiTemplate, allGroups: groups };
+}
+/** 拆分文件名预览（批次面板行与命名规则提示共用）；batchNoOverride 供提示用占位组固定显示「批次号」段 */
+export function splitPreviewName(
+  g: SplitGroup, templateKey: string, groups: SplitGroup[], multiTemplate: boolean, batchNoOverride?: string
+): string {
+  return getSplitFileBaseNameCore(g, splitTplName(templateKey), state.exportMode, {
+    ...splitNamingOptions(groups, multiTemplate),
+    batchNo: batchNoOverride != null ? batchNoOverride : (state.splitBatches?.[g.key]?.batchNo || ''),
+  }) + '.xlsx';
 }
 
 // ==================== 模版输出缓存 ====================
@@ -531,7 +549,8 @@ export async function buildSplitFilesForTemplates(templateKeys: string[], ext: s
   if (!templateKeys.length) return files;
   cacheCurrentTemplateOutput();
   const currentTemplate = state.targetTemplate;
-  if (templateKeys.includes('shenbianyun')) ensureSplitBatches(getSplitGroups());
+  // 批次号对全部模板生成（batchno 命名规则通用）；写入表内容的批次号仍仅身边云使用
+  ensureSplitBatches(getSplitGroups());
   const usedNames = new Set<string>();
 
   for (const templateKey of templateKeys) {
@@ -563,6 +582,7 @@ export async function buildSplitFilesForTemplates(templateKeys: string[], ext: s
     const outRows = out.outputRows;
 
     const groups = getSplitGroupsFromMetaCore(asSplitMeta(out.outputRowMeta), state.exportMode);
+    const naming = splitNamingOptions(groups, templateKeys.length > 1);
     for (const g of groups) {
       const rows = g.rowIdxs.map(i => outRows[i]).filter(Boolean);
       if (!rows.length) continue;
@@ -579,7 +599,7 @@ export async function buildSplitFilesForTemplates(templateKeys: string[], ext: s
         const wb = await buildWorkbookForTemplate(templateKey, outHeaders, rows, batchNo);
         data = workbookToArray(wb);
       }
-      files.push({ name: allocSplitFileName(g, templateKey, ext, usedNames), data });
+      files.push({ name: allocSplitFileName(g, templateKey, ext, usedNames, naming), data });
     }
   }
 
@@ -704,6 +724,7 @@ export function resetAll() {
     outputRows: null, outputHeaders: null, outputRowMeta: [], selectedNoteRows: [], previewRowLimit: DEFAULT_PREVIEW_ROW_LIMIT, templateFiles: {}, cleanCount: 0,
     unmatchedRows: [], shangSheCandidates: [],
     exportMode: 'merge', splitBatches: {}, splitGroupList: [],
+    splitNamingRule: 'compact',
   });
   ['accum-indicator','step-mapping','step-template','step-export'].forEach(id =>
     byId(id).classList.add('hidden'));

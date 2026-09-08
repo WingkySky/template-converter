@@ -70,6 +70,7 @@ export interface AppState {
   sbyPlainAmount: boolean;
   exportMode: 'merge' | 'byFile' | 'bySheet';
   splitBatches: Record<string, { batchNo: string; shangSheId: string; shangSheName: string }>;
+  splitNamingRule: 'compact' | 'batchno' | 'batchno-compact' | 'full';
   splitGroupList: { key: string; fileName: string; sheetName: string; count: number }[];
 }
 
@@ -115,6 +116,8 @@ export const state = {
   exportMode: 'merge' as AppState['exportMode'],
   // 拆分模式下每份的商社/批次号: { [groupKey]: { batchNo, shangSheId, shangSheName } }
   splitBatches: {} as AppState['splitBatches'],
+  // 拆分文件命名规则: 'compact' 精简（默认）| 'batchno' 批次号 | 'full' 完整（源文件名_表名_模板名）
+  splitNamingRule: 'compact' as AppState['splitNamingRule'],
   // 渲染拆分批次面板时暂存的分组列表（供下拉框回调定位分组）
   splitGroupList: [] as AppState['splitGroupList'],
 } satisfies AppState;

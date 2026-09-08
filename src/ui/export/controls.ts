@@ -8,6 +8,7 @@
 // L1389-1404、sbyOptionsHTML L1406-1421、cleanCount 提示 L1472）的等价拆出，行文逐字保真，
 // 返回串按原 skeleton（L1462-1487）中的出现顺序拼装，保证 DOM 顺序不变。
 // 唯一渲染差异：内联 onclick/onchange/oninput/onfocus → data-action + data-*（事件委托）。
+// 命名规则下拉（onSplitNamingRuleChange）与批次面板文件名预览为 legacy 后增强，无 legacy 锚点。
 // 仍留在 legacy.js 的编排函数（showExportStep/cacheCurrentTemplateOutput/getSelectedTemplates/
 // getSplitGroups/getSplitGroupCounts/isSplitExportActive/ensureSplitBatches）经 set/init 注入，
 // 不 import legacy.js、不挂 window。
@@ -16,7 +17,7 @@ import { icon } from '../icons';
 import { escapeHTML, delegateAction, byId } from '../dom';
 import {
   updateOutputRow, taxSourceForPlatform, getTasksForShangShe, applyBatchShangShe,
-  fillShangSheInfoForRow, lookupShangShe, splitGroupLabelBridge,
+  fillShangSheInfoForRow, lookupShangShe, splitGroupLabelBridge, splitPreviewName,
 } from '../steps/export';
 import { parseTaskString, inferWorkType } from '../../core/kb/task';
 import type { FillRowContext } from '../../core/kb/shangshe-fill';
@@ -88,9 +89,8 @@ export function onBatchNoChange(inputEl: HTMLInputElement): void {
 
 export function onExportModeChange(mode: AppState['exportMode']): void {
   state.exportMode = mode;
-  if (mode !== 'merge' && getSelectedTemplates().includes('shenbianyun')) {
-    ensureSplitBatches(getSplitGroups());
-  }
+  // 拆分模式下即为全模板生成批次号（batchno 命名规则通用；写入表内容仍仅身边云使用）
+  if (mode !== 'merge') ensureSplitBatches(getSplitGroups());
   showExportStep();
 }
 
@@ -98,6 +98,33 @@ export function onSplitBatchNoChange(inputEl: HTMLInputElement): void {
   const key = inputEl.dataset.groupKey;
   if (!key || !state.splitBatches[key]) return;
   state.splitBatches[key].batchNo = String(inputEl.value || '').trim();
+  updateSplitPreview(key);
+}
+
+export function onSplitNamingRuleChange(selectEl: HTMLSelectElement): void {
+  const v = selectEl.value as AppState['splitNamingRule'];
+  if (v === 'compact' || v === 'batchno' || v === 'batchno-compact' || v === 'full') state.splitNamingRule = v;
+  showExportStep();
+}
+
+// 批次面板预览的模板集合（未走多选流程时回退当前模板）
+function previewTpls(): string[] {
+  const tpls = getSelectedTemplates();
+  return tpls.length ? tpls : ([state.targetTemplate as string].filter(Boolean));
+}
+function splitPreviewText(g: SplitGroup, groups: SplitGroup[], tpls: string[]): string {
+  return tpls.map(k => splitPreviewName(g, k, groups, tpls.length > 1)).join(' / ');
+}
+// 批次号手改后就地更新该组预览（全量重渲染会夺走输入焦点）
+function updateSplitPreview(key: string): void {
+  const el = document.querySelector(`[data-split-preview="${CSS.escape(key)}"]`) as HTMLElement | null;
+  if (!el) return;
+  const groups = getSplitGroups();
+  const g = groups.find(x => x.key === key);
+  if (!g) return;
+  const text = `文件名：${splitPreviewText(g, groups, previewTpls())}`;
+  el.textContent = text;
+  el.title = text;
 }
 
 export function onSbyOptionChange(): void {
@@ -200,6 +227,10 @@ export function renderExportControls(): string {
   const splitActive = isSplitExportActive();
   const showSplitModePanel = rows.length > 0 && (splitCounts.byFile > 1 || splitCounts.bySheet > 1);
   let splitModeHTML = '';
+  // 命名规则提示与批次面板预览共用 splitPreviewName（与实际导出命名同源，不会两处漂移）
+  const namingGroups = splitActive ? getSplitGroups() : [];
+  const namingTpls = previewTpls();
+  const namingRule = state.splitNamingRule || 'compact';
   if (showSplitModePanel) {
     const mode = state.exportMode || 'merge';
     const radio = (value: string, label: string, count: number) => {
@@ -209,7 +240,13 @@ export function renderExportControls(): string {
         ${label}${value!=='merge'&&count>1?`（${count} 份）`:''}
       </label>`;
     };
-    const activeGroups = splitActive ? getSplitGroups().length : 0;
+    const activeGroups = namingGroups.length;
+    const hintGroup: SplitGroup = { key: '', fileName: '源文件名', sheetName: '工作表名', rowIdxs: [] };
+    const hintTpl = namingTpls[0] || (state.targetTemplate as string) || '';
+    const namePattern = splitPreviewName(hintGroup, hintTpl, namingGroups, namingTpls.length > 1, '批次号');
+    const namingNote = namingRule === 'batchno' || namingRule === 'batchno-compact'
+      ? '（无批次号的份自动回退精简命名）'
+      : namingRule === 'compact' ? '（自动省略与整批相同的段）' : '';
     splitModeHTML = `
     <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:8px;">${icon('package', 14)} 导出模式</div>
@@ -218,7 +255,18 @@ export function renderExportControls(): string {
         ${radio('byFile', '按文件拆分', splitCounts.byFile)}
         ${radio('bySheet', '按数据表拆分', splitCounts.bySheet)}
       </div>
-      ${splitActive ? `<div style="font-size:12px;color:var(--text2);margin-top:8px;">将生成 <strong style="color:var(--accent2);">${activeGroups}</strong> 个文件（与来源一一对应），打包为 ZIP 下载；命名规则：<strong>源文件名${state.exportMode==='bySheet'?'_工作表名':''}_模板名.xlsx</strong>。</div>` : ''}
+      ${splitActive ? `
+      <div style="font-size:12px;color:var(--text2);margin-top:8px;">将生成 <strong style="color:var(--accent2);">${activeGroups}</strong> 个文件（与来源一一对应），打包为 ZIP 下载。</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap;font-size:12px;color:var(--text2);">
+        <span style="white-space:nowrap;">命名规则</span>
+        <select data-action="onSplitNamingRuleChange">
+          <option value="compact" ${namingRule==='compact'?'selected':''}>精简（自动省略相同段）</option>
+          <option value="batchno" ${namingRule==='batchno'?'selected':''}>批次号</option>
+          <option value="batchno-compact" ${namingRule==='batchno-compact'?'selected':''}>批次号+精简</option>
+          <option value="full" ${namingRule==='full'?'selected':''}>完整（源文件名${state.exportMode==='bySheet'?'_工作表名':''}_模板名）</option>
+        </select>
+        <span>文件名形如 <strong style="color:var(--text);">${escapeHTML(namePattern)}</strong>${namingNote}</span>
+      </div>` : ''}
     </div>`;
   }
 
@@ -237,6 +285,7 @@ export function renderExportControls(): string {
         const status = b.shangSheName
           ? `<span style="color:var(--green);">✓ ${escapeHTML(b.shangSheName)}</span>`
           : '<span style="color:var(--orange);">未匹配到商社，可搜索选择</span>';
+        const previewText = splitPreviewText(g, groups, namingTpls);
         return `
         <div style="display:grid;grid-template-columns:minmax(140px,1.1fr) minmax(200px,1.5fr) minmax(170px,1fr);gap:10px;align-items:center;padding:8px 0;${gi>0?'border-top:1px solid var(--border);':''}">
           <div style="min-width:0;" title="${escapeHTML(splitGroupLabelBridge(g))}（${g.rowIdxs.length} 行）">
@@ -247,9 +296,13 @@ export function renderExportControls(): string {
             <div style="font-size:11px;margin-bottom:3px;">${status}</div>
             ${createShangSheSearchHTML('split' + gi, '搜索商社（编号/名称/税号）...', b.shangSheName, b.shangSheId)}
           </div>
-          <input data-group-key="${escapeHTML(g.key)}" value="${escapeHTML(b.batchNo || '')}" placeholder="批次号（可修改）"
-            style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;outline:none;"
-            data-action="onSplitBatchNoChange">
+          <div style="min-width:0;">
+            <input data-group-key="${escapeHTML(g.key)}" value="${escapeHTML(b.batchNo || '')}" placeholder="批次号（可修改）"
+              style="width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:7px 10px;color:var(--text);font-size:13px;outline:none;"
+              data-action="onSplitBatchNoChange">
+            <div data-split-preview="${escapeHTML(g.key)}" title="${escapeHTML(previewText)}"
+              style="font-size:11px;color:var(--text2);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">文件名：${escapeHTML(previewText)}</div>
+          </div>
         </div>`;
       }).join('')}
     </div>`;
@@ -414,6 +467,7 @@ export function initExportControlsHandlers(deps: ExportControlsDeps): void {
     onTaxSourceChange: (el) => onTaxSourceChange(el as HTMLSelectElement, Number(el.dataset.rowIdx)),
     onTaskChange: (el) => onTaskChange(el as HTMLSelectElement, Number(el.dataset.rowIdx)),
     onExportModeChange: (el) => onExportModeChange((el.dataset.mode || 'merge') as AppState['exportMode']),
+    onSplitNamingRuleChange: (el) => onSplitNamingRuleChange(el as HTMLSelectElement),
     onSbyOptionChange: () => onSbyOptionChange(),
     onBatchNoChange: (el) => onBatchNoChange(el as HTMLInputElement),
     onSplitBatchNoChange: (el) => onSplitBatchNoChange(el as HTMLInputElement),

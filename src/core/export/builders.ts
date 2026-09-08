@@ -122,7 +122,7 @@ export interface YouyiWorkbookDeps {
   generateTaskListSheet: (kb: KB) => Rows;
 }
 
-// 云杉公司: 从头生成费用明细 + 动态生成配置表和任务清单
+// 本公司: 从头生成费用明细 + 动态生成配置表和任务清单
 export function buildYouyiWorkbook(headers: string[], rows: Rows, deps: YouyiWorkbookDeps): XLSX.WorkBook {
   const { kb, generateConfigSheet, generateTaskListSheet } = deps;
   const wb = XLSX.utils.book_new();

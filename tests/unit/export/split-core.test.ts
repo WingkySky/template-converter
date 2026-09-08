@@ -72,8 +72,8 @@ describe('sanitizeFileNamePart', () => {
 
 describe('getSplitFileBaseName', () => {
   it('扩展名剥离 + 清洗 + 模版名拼接；merge/byFile 模式不追加表名', () => {
-    expect(getSplitFileBaseName(group('发放表.xlsx', 'S1'), '云杉公司', 'byFile')).toBe('发放表_云杉公司');
-    expect(getSplitFileBaseName(group('发放表.xlsx', ''), '云杉公司', 'merge')).toBe('发放表_云杉公司');
+    expect(getSplitFileBaseName(group('发放表.xlsx', 'S1'), '本公司', 'byFile')).toBe('发放表_本公司');
+    expect(getSplitFileBaseName(group('发放表.xlsx', ''), '本公司', 'merge')).toBe('发放表_本公司');
   });
 
   it('bySheet 模式追加清洗后的表名', () => {
@@ -88,13 +88,13 @@ describe('getSplitFileBaseName', () => {
 describe('allocSplitFileName', () => {
   it('首分配 base.ext 并登记进 usedNames', () => {
     const used = new Set<string>();
-    expect(allocSplitFileName(group('a.csv', ''), 'xlsx', used, '云杉公司', 'merge')).toBe('a_云杉公司.xlsx');
-    expect(used.has('a_云杉公司.xlsx')).toBe(true);
+    expect(allocSplitFileName(group('a.csv', ''), 'xlsx', used, '本公司', 'merge')).toBe('a_本公司.xlsx');
+    expect(used.has('a_本公司.xlsx')).toBe(true);
   });
 
   it('冲突时递增 (2)/(3) 后缀', () => {
-    const used = new Set<string>(['a_云杉公司.xlsx']);
-    expect(allocSplitFileName(group('a.csv', ''), 'xlsx', used, '云杉公司', 'merge')).toBe('a_云杉公司(2).xlsx');
-    expect(allocSplitFileName(group('a.csv', ''), 'xlsx', used, '云杉公司', 'merge')).toBe('a_云杉公司(3).xlsx');
+    const used = new Set<string>(['a_本公司.xlsx']);
+    expect(allocSplitFileName(group('a.csv', ''), 'xlsx', used, '本公司', 'merge')).toBe('a_本公司(2).xlsx');
+    expect(allocSplitFileName(group('a.csv', ''), 'xlsx', used, '本公司', 'merge')).toBe('a_本公司(3).xlsx');
   });
 });

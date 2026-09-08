@@ -11,7 +11,7 @@
 当前项目是一个纯前端单文件应用：
 
 - `template-converter.html`：4503 行 / 188KB，包含全部 CSS（~250 行）、HTML 骨架（~80 行）与 JS（~4170 行）
-- 功能：上传 CSV/Excel → 智能识别列 → 转换为四个目标模版（移步到岗 / 身边云 / 云杉公司 / 自定义）→ 支持合并/按文件/按数据表三种导出模式
+- 功能：上传 CSV/Excel → 智能识别列 → 转换为四个目标模版（移步到岗 / 身边云 / 本公司 / 自定义）→ 支持合并/按文件/按数据表三种导出模式
 - 依赖：SheetJS 0.20.1（sheetjs.com CDN）、ExcelJS 4.4.0（jsDelivr CDN）
 - 存储：知识库（商社/任务数据）存 localStorage，靠"导出备份/导入备份"文件在用户间传递
 - 文件保存：File System Access API（`showSaveFilePicker`，记住上次目录），带自动下载降级
@@ -135,7 +135,7 @@ import type { TemplateDefinition, TemplateContext } from '../../types';
 
 export default {
   key: 'youyi',
-  name: '云杉公司',
+  name: '本公司',
   buildWorkbook: async (ctx: TemplateContext) => Workbook,
   // ctx: { headers, rows, meta, batchNo, kb, options, templateFile }
   buildFileName: (ctx: TemplateContext) => string,

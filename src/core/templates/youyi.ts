@@ -1,4 +1,4 @@
-// 模版：云杉公司 —— 自 src/templates.ts（元数据）与 legacy.js 的 buildYouyiWorkbook 包装
+// 模版：本公司 —— 自 src/templates.ts（元数据）与 legacy.js 的 buildYouyiWorkbook 包装
 // （原直调 loadKB() → 改经 ctx.kb 传入）与 getExportFileNameForTemplate（命名分支，
 // 云杉模版不参与批次号命名）收敛而来（阶段 4 模版注册表）。
 // buildFileName 不含 .${ext} 后缀（后缀由 registry.buildFileNameForTemplate 统一追加）。
@@ -7,7 +7,7 @@ import { generateConfigSheet, generateTaskListSheet } from '../kb/task';
 import { getTodayStr } from '../export/naming';
 import type { TemplateDefinition } from './registry';
 
-const name = '云杉公司';
+const name = '本公司';
 
 export const youyiTemplate: TemplateDefinition = {
   key: 'youyi',

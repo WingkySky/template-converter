@@ -151,7 +151,7 @@ export function generateOutputData(input: GenerateInput): GenerateResult {
     }
 
     // 构建候选列表：自动检测到的命中均转为候选，不直接锁定行，
-    // 以便云杉公司内部同一公司存在多个编号时可手动切换。
+    // 以便本公司内部同一公司存在多个编号时可手动切换。
     let candidates: { id: string; label: string; matchType?: string }[] = [];
     if (taxIdLookup) {
       const id = kbGetShangSheIdFromLookup(input.kb, taxIdLookup);

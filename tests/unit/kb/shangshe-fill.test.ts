@@ -125,6 +125,14 @@ describe('kbGetRemarkPresetValue', () => {
     })).toBe('A.xlsx、B');
   });
 
+  it('sheetname：meta sheet 名原样返回，缺失时返回空串', () => {
+    expect(kbGetRemarkPresetValue(kb, 'sheetname', {
+      row: [], metaSheetName: '6月支付明细',
+    })).toBe('6月支付明细');
+    expect(kbGetRemarkPresetValue(kb, 'sheetname', { row: [], metaSheetName: '' })).toBe('');
+    expect(kbGetRemarkPresetValue(kb, 'sheetname', { row: [] })).toBe('');
+  });
+
   it('date：当天日期 YYYY-MM-DD', () => {
     const d = new Date();
     const expected = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;

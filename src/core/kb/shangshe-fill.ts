@@ -109,6 +109,8 @@ export interface RemarkPresetContext {
   row: Row;
   /** 原 `(state.outputRowMeta?.[rowIdx] || {}).fileName` */
   metaFileName?: string;
+  /** 原 `(state.outputRowMeta?.[rowIdx] || {}).sheetName` */
+  metaSheetName?: string;
   /** 原 `state.sources.filter(s => s.selected).map(s => s.fileName)`（filter(Boolean) 在核心内做） */
   selectedFileNames?: string[];
   /** 原 `state.outputHeaders || []` */
@@ -122,6 +124,9 @@ export function kbGetRemarkPresetValue(kb: KB, preset: string, ctx: RemarkPreset
   if (preset === 'filename') {
     const rawName = ctx.metaFileName || (ctx.selectedFileNames || []).filter(Boolean).join('、');
     return rawName.replace(/\.[^.]+$/, '');
+  }
+  if (preset === 'sheetname') {
+    return ctx.metaSheetName || '';
   }
   if (preset === 'date') {
     const d = new Date();

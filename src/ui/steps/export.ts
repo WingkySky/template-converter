@@ -83,6 +83,7 @@ export function getRemarkPresetValue(rowIdx: number, preset: string): string {
   return kbGetRemarkPresetValue(loadKB(), preset, {
     row: state.outputRows?.[rowIdx] || [],
     metaFileName: (state.outputRowMeta?.[rowIdx] || {}).fileName,
+    metaSheetName: (state.outputRowMeta?.[rowIdx] || {}).sheetName,
     selectedFileNames: state.sources.filter(s => s.selected).map(s => s.fileName),
     outputHeaders: state.outputHeaders || [],
     customText: (document.getElementById('note-custom-text') as HTMLInputElement | null)?.value.trim() || '',

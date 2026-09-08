@@ -165,6 +165,7 @@ export function renderRemarkPanel(): string {
       <span style="font-size:12px;color:var(--text2);">已选 <strong id="selected-note-count" style="color:var(--accent2);">${selectedNoteSet.size}</strong> 行</span>
       <select id="note-preset" data-action="onNotePresetChange">
         <option value="filename">文件名</option>
+        <option value="sheetname">Sheet 名</option>
         <option value="date">日期</option>
         <option value="shangshe">商社简称</option>
         <option value="custom">自定义</option>

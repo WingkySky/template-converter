@@ -61,6 +61,11 @@ describe('renderRemarkPanel', () => {
     expect(html).not.toContain('onclick=');
   });
 
+  it('预设下拉含 Sheet 名方案', () => {
+    const html = renderRemarkPanel();
+    expect(html).toContain('<option value="sheetname">Sheet 名</option>');
+  });
+
   it('已选行数写入计数节点', () => {
     state.selectedNoteRows = [0, 1];
     expect(renderRemarkPanel()).toContain('<strong id="selected-note-count" style="color:var(--accent2);">2</strong>');

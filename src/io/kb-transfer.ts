@@ -4,9 +4,13 @@ import * as XLSX from 'xlsx';
 import type { KB } from '../core/kb/model';
 import type { Rows } from '../types';
 import {
-  mergeKnowledgeRows, applyConfigSheetRows, applyTaskListSheetRows, knowledgeRowsFromKB,
+  mergeKnowledgeRows, mergeConfigSheetRows, mergeTaskListEntries, mergeTaskListSheetRows,
+  mergeConfigData, parseSignEntitySheetRows, parsePlatformTaxSourceSheetRows,
+  knowledgeRowsFromKB, type MergeConfigResult,
 } from '../core/kb/model';
-import { generateConfigSheet, generateTaskListSheet } from '../core/kb/task';
+import {
+  generateConfigSheet, generateTaskListSheet, generateSignEntitySheet, generatePlatformTaxSourceSheet,
+} from '../core/kb/task';
 import { loadKB, saveKB } from './kb-storage';
 
 // 导出知识库为Excel备份文件（用户看到中文列名，内部仍保存JSON结构）
@@ -33,6 +37,15 @@ export function exportKBToExcel(): void {
   taskWs['!cols'] = [{ wch: 40 }];
   XLSX.utils.book_append_sheet(wb, taskWs, '任务清单');
 
+  // 映射数据单独成 sheet 导出：否则备份无法回读签约主体/平台税源地映射
+  const signWs = XLSX.utils.aoa_to_sheet(generateSignEntitySheet(kb));
+  signWs['!cols'] = [{ wch: 20 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, signWs, '签约主体映射');
+
+  const platWs = XLSX.utils.aoa_to_sheet(generatePlatformTaxSourceSheet(kb));
+  platWs['!cols'] = [{ wch: 20 }, { wch: 40 }];
+  XLSX.utils.book_append_sheet(wb, platWs, '平台税源地映射');
+
   const d = new Date();
   XLSX.writeFile(wb, `知识库备份_${d.getFullYear()}${String(d.getMonth()+1).padStart(2,'0')}${String(d.getDate()).padStart(2,'0')}.xlsx`);
 }
@@ -51,17 +64,17 @@ export function importKBFromJSON(jsonStr: string): boolean {
     return false;
   }
   const currentKB = loadKB();
-  // 合并：新数据覆盖旧数据
+  // 合并：新数据覆盖旧数据，旧数据保留（与 mergeKnowledgeRows 同语义）
   for (const [id, entry] of Object.entries(newKB.shangSheMap) as [string, KB['shangSheMap'][string]][]) {
     currentKB.shangSheMap[id] = entry;
   }
-  // 合并配置数据（新数据覆盖旧数据）
+  // 合并配置数据（增量：列表并集、映射同名键覆盖，不删除旧值）
   if (newKB.configData) {
-    currentKB.configData = newKB.configData;
+    mergeConfigData(currentKB, newKB.configData);
   }
-  // 合并任务清单数据（新数据覆盖旧数据）
-  if (newKB.taskListData) {
-    currentKB.taskListData = newKB.taskListData;
+  // 合并任务清单（同一商社+任务名新覆盖旧，其余保留）
+  if (Array.isArray(newKB.taskListData) && newKB.taskListData.length > 0) {
+    mergeTaskListEntries(newKB.taskListData, currentKB);
   }
   saveKB(currentKB);
   return true;
@@ -83,16 +96,33 @@ export function importKBFromWorkbook(wb: XLSX.WorkBook): { newCount: number; upd
 
   const result = mergeKnowledgeRows(mainRows, kb);
 
+  // 配置表：增量合并（列表并集 + 可选扩展列映射，旧数据保留）
   const configSheetName = wb.SheetNames.find(n => n.includes('配置表'));
   if (configSheetName) {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[configSheetName], { header: 1, raw: false }) as Rows;
-    applyConfigSheetRows(rows, kb);
+    mergeConfigSheetRows(rows, kb);
   }
 
+  // 独立映射 sheet（新备份导出会包含；旧备份没有则保留现有映射）
+  const signEntitySheetName = wb.SheetNames.find(n => n.includes('签约主体映射'));
+  if (signEntitySheetName) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[signEntitySheetName], { header: 1, raw: false }) as Rows;
+    const mapping = parseSignEntitySheetRows(rows);
+    if (Object.keys(mapping).length > 0) mergeConfigData(kb, { signEntityMapping: mapping });
+  }
+
+  const platTaxSourceSheetName = wb.SheetNames.find(n => n.includes('平台税源地映射'));
+  if (platTaxSourceSheetName) {
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[platTaxSourceSheetName], { header: 1, raw: false }) as Rows;
+    const mapping = parsePlatformTaxSourceSheetRows(rows);
+    if (Object.keys(mapping).length > 0) mergeConfigData(kb, { platformTaxSourceMapping: mapping });
+  }
+
+  // 任务清单：增量合并
   const taskSheetName = wb.SheetNames.find(n => n.includes('任务清单'));
   if (taskSheetName) {
     const rows = XLSX.utils.sheet_to_json(wb.Sheets[taskSheetName], { header: 1, raw: false }) as Rows;
-    applyTaskListSheetRows(rows, kb);
+    mergeTaskListSheetRows(rows, kb);
   }
 
   saveKB(kb);
@@ -185,7 +215,7 @@ export function handleKBImport(event: Event): void {
   target.value = '';
 }
 
-// 处理配置数据上传（从模板文件更新配置表和任务清单）
+// 处理配置数据上传（增量合并：新数据增改，已有配置不会被删除）
 export function handleKBConfigUpload(event: Event): void {
   const target = event.target as HTMLInputElement;
   const file = target.files?.[0];
@@ -196,130 +226,51 @@ export function handleKBConfigUpload(event: Event): void {
       const data = e.target?.result;
       const wb = XLSX.read(data, { type: 'array' });
       const kb = loadKB();
-      let taxSourceCount = 0, platformCount = 0, taskCount = 0, shangSheCrossRef = 0;
+      let shangSheCrossRef = 0;
+      let foundConfig = false, foundTask = false;
+      let configResult: MergeConfigResult = { newTaxSources: 0, newPlatforms: 0, newSignEntityKeys: 0, newPlatformTaxSourceKeys: 0 };
+      let taskResult = { newCount: 0, updateCount: 0 };
 
-      // 1. 解析"配置表"sheet
+      // 1. 「配置表」sheet：税源地/平台列表并集 + 可选扩展列映射合并
       const configSheetName = wb.SheetNames.find(n => n.includes('配置表'));
       if (configSheetName) {
-        const ws = wb.Sheets[configSheetName];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }) as Rows;
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[configSheetName], { header: 1, raw: false }) as Rows;
         if (rows.length >= 2) {
-          const taxSources = [];
-          const platforms = [];
-          const headerRow = rows[0] || [];
-          // 检查是否有扩展列（签约主体映射、平台税源地映射）
-          let signEntityColIdx = -1;
-          let platTaxSourceColIdx = -1;
-          for (let c = 0; c < headerRow.length; c++) {
-            const h = String(headerRow[c] || '');
-            if (/签约主体/.test(h)) signEntityColIdx = c;
-            if (/平台税源地/.test(h)) platTaxSourceColIdx = c;
-          }
-          const signEntityMapping: Record<string, string[]> = {};
-          const platformTaxSourceMapping: Record<string, string> = {};
-          // Row 0 is header ("税源地", "平台", ...)
-          for (let i = 1; i < rows.length; i++) {
-            const row = rows[i] || [];
-            const taxVal = String(row[0] || '').trim();
-            const platVal = String(row[1] || '').trim();
-            taxSources.push(taxVal);
-            platforms.push(platVal);
-            // 解析签约主体映射（格式：签约主体名称→关键词1,关键词2）
-            if (signEntityColIdx >= 0) {
-              const seVal = String(row[signEntityColIdx] || '').trim();
-              if (seVal && seVal.includes('→')) {
-                const [seKey, seKeywords] = seVal.split('→').map(s => s.trim());
-                if (seKey && seKeywords) {
-                  signEntityMapping[seKey] = seKeywords.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-                }
-              }
-            }
-            // 解析平台税源地映射（格式：关键词→税源地）
-            if (platTaxSourceColIdx >= 0) {
-              const ptVal = String(row[platTaxSourceColIdx] || '').trim();
-              if (ptVal && ptVal.includes('→')) {
-                const [ptKey, ptTaxSource] = ptVal.split('→').map(s => s.trim());
-                if (ptKey && ptTaxSource) {
-                  platformTaxSourceMapping[ptKey] = ptTaxSource;
-                }
-              }
-            }
-          }
-          // Filter out completely empty values
-          kb.configData = {
-            taxSources: taxSources.filter(v => v !== ''),
-            platforms: platforms.filter(v => v !== '')
-          };
-          if (Object.keys(signEntityMapping).length > 0) {
-            kb.configData.signEntityMapping = signEntityMapping;
-          }
-          if (Object.keys(platformTaxSourceMapping).length > 0) {
-            kb.configData.platformTaxSourceMapping = platformTaxSourceMapping;
-          }
-          taxSourceCount = kb.configData.taxSources.length;
-          platformCount = kb.configData.platforms.length;
+          configResult = mergeConfigSheetRows(rows, kb);
+          foundConfig = true;
         }
       }
 
-      // 1.5 解析"签约主体映射"sheet（独立sheet格式：签约主体 | 关键词1,关键词2）
+      // 1.5 独立「签约主体映射」/「平台税源地映射」sheet（键值合并）
       const signEntitySheetName = wb.SheetNames.find(n => n.includes('签约主体映射'));
       if (signEntitySheetName) {
-        const ws = wb.Sheets[signEntitySheetName];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }) as Rows;
-        if (rows.length >= 2) {
-          const signEntityMapping: Record<string, string[]> = {};
-          for (let i = 1; i < rows.length; i++) {
-            const row = rows[i] || [];
-            const seKey = String(row[0] || '').trim();
-            const seKeywords = String(row[1] || '').trim();
-            if (seKey && seKeywords) {
-              signEntityMapping[seKey] = seKeywords.split(/[,，]/).map(s => s.trim()).filter(Boolean);
-            }
-          }
-          if (Object.keys(signEntityMapping).length > 0) {
-            if (!kb.configData) kb.configData = {} as KB['configData'];
-            kb.configData.signEntityMapping = signEntityMapping;
-          }
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[signEntitySheetName], { header: 1, raw: false }) as Rows;
+        const mapping = parseSignEntitySheetRows(rows);
+        if (Object.keys(mapping).length > 0) {
+          const r = mergeConfigData(kb, { signEntityMapping: mapping });
+          configResult.newSignEntityKeys += r.newSignEntityKeys;
+          foundConfig = true;
         }
       }
 
-      // 1.6 解析"平台税源地映射"sheet（独立sheet格式：关键词 | 税源地）
       const platTaxSourceSheetName = wb.SheetNames.find(n => n.includes('平台税源地映射'));
       if (platTaxSourceSheetName) {
-        const ws = wb.Sheets[platTaxSourceSheetName];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }) as Rows;
-        if (rows.length >= 2) {
-          const platformTaxSourceMapping: Record<string, string> = {};
-          for (let i = 1; i < rows.length; i++) {
-            const row = rows[i] || [];
-            const ptKey = String(row[0] || '').trim();
-            const ptTaxSource = String(row[1] || '').trim();
-            if (ptKey && ptTaxSource) {
-              platformTaxSourceMapping[ptKey] = ptTaxSource;
-            }
-          }
-          if (Object.keys(platformTaxSourceMapping).length > 0) {
-            if (!kb.configData) kb.configData = {} as KB['configData'];
-            kb.configData.platformTaxSourceMapping = platformTaxSourceMapping;
-          }
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[platTaxSourceSheetName], { header: 1, raw: false }) as Rows;
+        const mapping = parsePlatformTaxSourceSheetRows(rows);
+        if (Object.keys(mapping).length > 0) {
+          const r = mergeConfigData(kb, { platformTaxSourceMapping: mapping });
+          configResult.newPlatformTaxSourceKeys += r.newPlatformTaxSourceKeys;
+          foundConfig = true;
         }
       }
 
-      // 2. 解析"任务清单"sheet
+      // 2. 「任务清单」sheet：同一（商社编号+任务名）覆盖更新，旧任务保留
       const taskSheetName = wb.SheetNames.find(n => n.includes('任务清单'));
       if (taskSheetName) {
-        const ws = wb.Sheets[taskSheetName];
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false }) as Rows;
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[taskSheetName], { header: 1, raw: false }) as Rows;
         if (rows.length >= 2) {
-          const taskEntries = [];
-          // Row 0 is header ("任务清单")
-          for (let i = 1; i < rows.length; i++) {
-            const row = rows[i] || [];
-            const entry = String(row[0] || '').trim();
-            if (entry) taskEntries.push(entry);
-          }
-          kb.taskListData = taskEntries;
-          taskCount = taskEntries.length;
+          taskResult = mergeTaskListSheetRows(rows, kb);
+          foundTask = true;
         }
       }
 
@@ -354,17 +305,23 @@ export function handleKBConfigUpload(event: Event): void {
 
       saveKB(kb);
 
-      let msg = '配置数据更新成功！\n';
-      if (taxSourceCount > 0 || platformCount > 0) {
-        msg += `配置表：${taxSourceCount} 个税源地，${platformCount} 个平台\n`;
+      let msg = '配置数据上传成功（增量合并，已有数据不会被删除）！\n';
+      if (configResult.newTaxSources > 0 || configResult.newPlatforms > 0) {
+        msg += `配置表：新增 ${configResult.newTaxSources} 个税源地、${configResult.newPlatforms} 个平台（当前共 ${(kb.configData.taxSources || []).length}/${(kb.configData.platforms || []).length} 项）\n`;
       }
-      if (taskCount > 0) {
-        msg += `任务清单：${taskCount} 条任务\n`;
+      if (configResult.newSignEntityKeys > 0) {
+        msg += `签约主体映射：新增 ${configResult.newSignEntityKeys} 条\n`;
+      }
+      if (configResult.newPlatformTaxSourceKeys > 0) {
+        msg += `平台税源地映射：新增 ${configResult.newPlatformTaxSourceKeys} 条\n`;
+      }
+      if (taskResult.newCount > 0 || taskResult.updateCount > 0) {
+        msg += `任务清单：新增 ${taskResult.newCount} 条，更新 ${taskResult.updateCount} 条（当前共 ${(kb.taskListData || []).length} 条）\n`;
       }
       if (shangSheCrossRef > 0) {
         msg += `费用明细交叉引用：${shangSheCrossRef} 个商社编号已在知识库中`;
       }
-      if (taxSourceCount === 0 && platformCount === 0 && taskCount === 0) {
+      if (!foundConfig && !foundTask) {
         msg += '未找到"配置表"或"任务清单"工作表';
       }
       alert(msg);

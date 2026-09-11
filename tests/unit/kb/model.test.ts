@@ -3,7 +3,8 @@ import { describe, it, expect } from 'vitest';
 import {
   KB_STORAGE_KEY, KB_SCHEMA_VERSION, KB_MAIN_HEADERS, DEFAULT_CONFIG,
   getConfigLists, migrateKB, mergeKnowledgeRows, knowledgeRowsFromKB,
-  applyConfigSheetRows, applyTaskListSheetRows, type KB,
+  mergeConfigSheetRows, mergeConfigData, mergeTaskListSheetRows,
+  parseSignEntitySheetRows, parsePlatformTaxSourceSheetRows, type KB,
 } from '../../../src/core/kb/model';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -93,25 +94,71 @@ describe('knowledgeRowsFromKB', () => {
   });
 });
 
-describe('applyConfigSheetRows / applyTaskListSheetRows', () => {
-  it('写入配置表数据；全空行不覆盖', () => {
+describe('mergeConfigSheetRows / mergeConfigData（配置增量合并，2026-09 替换整体写入）', () => {
+  it('列表并集：保留旧值与顺序，新值去重追加', () => {
     const kb = makeKB();
-    applyConfigSheetRows([['税源地','平台'], ['0001.湖南','278.甲乙科技'], ['','']], kb);
-    expect(kb.configData).toEqual({ taxSources: ['0001.湖南'], platforms: ['278.甲乙科技'] });
-    const before = kb.configData;
-    applyConfigSheetRows([['税源地','平台'], ['','']], kb);
-    expect(kb.configData).toBe(before); // 未覆盖
-    applyConfigSheetRows([['仅表头']], kb); // <2 行 no-op
-    expect(kb.configData).toBe(before);
+    kb.configData = { taxSources: ['0001.湖南'], platforms: ['278.甲乙科技'] };
+    const r = mergeConfigSheetRows([['税源地','平台'], ['0002.海南','283.丙丁工场'], ['0001.湖南','']], kb);
+    expect(r).toEqual({ newTaxSources: 1, newPlatforms: 1, newSignEntityKeys: 0, newPlatformTaxSourceKeys: 0 });
+    expect(kb.configData.taxSources).toEqual(['0001.湖南', '0002.海南']);
+    expect(kb.configData.platforms).toEqual(['278.甲乙科技', '283.丙丁工场']);
   });
 
-  it('写入任务清单；空清单不覆盖', () => {
+  it('上传文件缺少某列/全空 → 不清空旧值（修复刷走配置）', () => {
     const kb = makeKB();
-    applyTaskListSheetRows([['任务清单'], ['1.保洁(0001)'], [''], ['2.搬运(0002)']], kb);
+    kb.configData = { taxSources: ['0001.湖南'], platforms: ['278.甲乙科技'], signEntityMapping: { '佛山云杉': ['佛山'] } };
+    mergeConfigSheetRows([['税源地','平台'], ['','']], kb); // 全空行
+    mergeConfigSheetRows([['税源地','平台'], ['0009.测试','']], kb); // 只有税源地列有值
+    mergeConfigSheetRows([['仅表头']], kb); // <2 行 no-op
+    expect(kb.configData.taxSources).toEqual(['0001.湖南', '0009.测试']);
+    expect(kb.configData.platforms).toEqual(['278.甲乙科技']);
+    expect(kb.configData.signEntityMapping).toEqual({ '佛山云杉': ['佛山'] });
+  });
+
+  it('扩展列映射：无扩展列时旧映射保留；同名键新值覆盖', () => {
+    const kb = makeKB();
+    kb.configData = { taxSources: [], platforms: [], signEntityMapping: { '佛山云杉': ['佛山'] } };
+    mergeConfigSheetRows([['税源地','平台'], ['0001.湖南','278.甲乙科技']], kb);
+    expect(kb.configData.signEntityMapping).toEqual({ '佛山云杉': ['佛山'] });
+    mergeConfigSheetRows([['税源地','平台','签约主体'], ['0002.海南','','佛山云杉→佛山,甲乙'], ['','','广州国联→国联']], kb);
+    expect(kb.configData.signEntityMapping).toEqual({ '佛山云杉': ['佛山', '甲乙'], '广州国联': ['国联'] });
+  });
+
+  it('mergeConfigData 局部补丁：未提供的字段保持不变', () => {
+    const kb = makeKB();
+    kb.configData = { taxSources: ['0001.湖南'], platforms: ['P1'], platformTaxSourceMapping: { '河南': '0003.河南' } };
+    const r = mergeConfigData(kb, { taxSources: ['0002.海南'] });
+    expect(r).toEqual({ newTaxSources: 1, newPlatforms: 0, newSignEntityKeys: 0, newPlatformTaxSourceKeys: 0 });
+    expect(kb.configData.platforms).toEqual(['P1']);
+    expect(kb.configData.platformTaxSourceMapping).toEqual({ '河南': '0003.河南' });
+  });
+});
+
+describe('mergeTaskListSheetRows（任务清单增量合并）', () => {
+  it('新任务追加；同一（商社+任务名）覆盖更新序号；旧任务保留', () => {
+    const kb = makeKB();
+    mergeTaskListSheetRows([['任务清单'], ['1.保洁(0001)'], ['2.搬运(0002)']], kb);
     expect(kb.taskListData).toEqual(['1.保洁(0001)', '2.搬运(0002)']);
-    const before = kb.taskListData;
-    applyTaskListSheetRows([['任务清单'], ['']], kb);
-    expect(kb.taskListData).toBe(before);
+    const r = mergeTaskListSheetRows([['任务清单'], ['5.保洁(0001)'], ['3.搬运(0002)'], ['4.扫地(0001)']], kb);
+    expect(r).toEqual({ newCount: 1, updateCount: 2 });
+    // 更新的任务保持原位（序号已更新），新任务追加到末尾
+    expect(kb.taskListData).toEqual(['5.保洁(0001)', '3.搬运(0002)', '4.扫地(0001)']);
+  });
+
+  it('空清单/仅表头 no-op', () => {
+    const kb = makeKB();
+    mergeTaskListSheetRows([['任务清单'], ['']], kb);
+    mergeTaskListSheetRows([['仅表头']], kb);
+    expect(kb.taskListData).toEqual([]);
+  });
+});
+
+describe('parseSignEntitySheetRows / parsePlatformTaxSourceSheetRows（独立映射 sheet）', () => {
+  it('解析键值对；空行跳过；关键词支持中英文逗号', () => {
+    expect(parseSignEntitySheetRows([['签约主体','关键词'], ['佛山云杉','佛山,甲乙'], ['',''], ['广州云杉','广州，丙丁']]))
+      .toEqual({ '佛山云杉': ['佛山', '甲乙'], '广州云杉': ['广州', '丙丁'] });
+    expect(parsePlatformTaxSourceSheetRows([['关键词','税源地'], ['天津','0007.天津'], ['','']]))
+      .toEqual({ '天津': '0007.天津' });
   });
 });
 

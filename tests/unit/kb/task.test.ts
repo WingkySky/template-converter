@@ -5,6 +5,7 @@ import {
   parseTaskListEntries, generateGlobalTaskList, findTaskContent,
   normalizeTaskNameToWorkType, inferWorkType, parseTaskString,
   kbGetTasksForShangShe, generateConfigSheet, generateTaskListSheet,
+  generateSignEntitySheet, generatePlatformTaxSourceSheet,
 } from '../../../src/core/kb/task';
 import { DEFAULT_CONFIG, type KB } from '../../../src/core/kb/model';
 
@@ -151,5 +152,18 @@ describe('generateTaskListSheet', () => {
     kb.shangSheMap['0001'] = { id: '0001', tasks: [{ name: '保洁', content: 'a' }] };
     kb.shangSheMap['0002'] = { id: '0002', tasks: [{ name: '搬运', content: 'b' }] };
     expect(generateTaskListSheet(kb)).toEqual([['任务清单'], ['1.保洁(0001)'], ['2.搬运(0002)']]);
+  });
+});
+
+describe('generateSignEntitySheet / generatePlatformTaxSourceSheet（备份导出映射）', () => {
+  it('生成与上传解析格式一致的键值行；空映射只输出表头', () => {
+    const kb = makeKB();
+    kb.configData.signEntityMapping = { '佛山云杉': ['佛山', '甲乙'] };
+    kb.configData.platformTaxSourceMapping = { '天津': '0007.天津' };
+    expect(generateSignEntitySheet(kb)).toEqual([['签约主体', '关键词'], ['佛山云杉', '佛山,甲乙']]);
+    expect(generatePlatformTaxSourceSheet(kb)).toEqual([['平台关键词', '税源地'], ['天津', '0007.天津']]);
+    const empty = makeKB();
+    expect(generateSignEntitySheet(empty)).toEqual([['签约主体', '关键词']]);
+    expect(generatePlatformTaxSourceSheet(empty)).toEqual([['平台关键词', '税源地']]);
   });
 });

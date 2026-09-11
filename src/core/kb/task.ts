@@ -177,3 +177,23 @@ export function generateTaskListSheet(kb: KB): Rows {
   }
   return sheetData;
 }
+
+// 生成「签约主体映射」sheet 数据（备份导出用，格式与上传解析一致：签约主体 | 关键词1,关键词2）
+export function generateSignEntitySheet(kb: KB): Rows {
+  const sheetData: Rows = [['签约主体', '关键词']];
+  const mapping = kb.configData?.signEntityMapping || {};
+  for (const [key, keywords] of Object.entries(mapping)) {
+    sheetData.push([key, (keywords || []).join(',')]);
+  }
+  return sheetData;
+}
+
+// 生成「平台税源地映射」sheet 数据（备份导出用，格式：关键词 | 税源地）
+export function generatePlatformTaxSourceSheet(kb: KB): Rows {
+  const sheetData: Rows = [['平台关键词', '税源地']];
+  const mapping = kb.configData?.platformTaxSourceMapping || {};
+  for (const [key, taxSource] of Object.entries(mapping)) {
+    sheetData.push([key, taxSource]);
+  }
+  return sheetData;
+}

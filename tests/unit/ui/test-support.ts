@@ -35,6 +35,7 @@ export interface StubDom {
 const KNOWN_IDS = [
   'kb-status-area', 'kb-upload-input', 'kb-config-upload-input', 'kb-import-input',
   'kb-btn-upload', 'kb-btn-sample', 'kb-btn-config', 'kb-btn-export', 'kb-btn-import', 'kb-btn-clear',
+  'kb-btn-manage-config', 'kb-config-modal', 'kb-config-panel-body',
   'upload-area', 'file-input', 'accum-indicator',
   'mapping-content', 'template-content', 'export-content',
   'step-mapping', 'step-template', 'step-export',

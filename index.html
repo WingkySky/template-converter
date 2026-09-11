@@ -55,6 +55,7 @@
       <button class="btn btn-orange btn-sm" id="kb-btn-sample">下载样例文件</button>
       <button class="btn btn-secondary btn-sm" id="kb-btn-config">更新配置数据</button>
       <input type="file" id="kb-config-upload-input" accept=".xlsx,.xls" style="display:none;">
+      <button class="btn btn-secondary btn-sm" id="kb-btn-manage-config">管理配置</button>
       <button class="btn btn-secondary" id="kb-btn-export">导出备份</button>
       <button class="btn btn-secondary" id="kb-btn-import">导入备份</button>
       <input type="file" id="kb-import-input" accept=".xlsx,.xls,.json" style="display:none;">
@@ -107,6 +108,16 @@
     <div id="export-content"></div>
   </div>
 </div>
+
+  <div class="modal-overlay hidden" id="kb-config-modal">
+    <div class="modal-box" role="dialog" aria-label="配置数据管理">
+      <div class="modal-head">
+        <span class="modal-title">配置数据管理</span>
+        <button class="btn btn-secondary btn-sm" data-action="kbcmClose">关闭</button>
+      </div>
+      <div class="modal-body" id="kb-config-panel-body"></div>
+    </div>
+  </div>
 
 </body>
 </html>

@@ -456,18 +456,18 @@ const keydownHandlers: Record<string, (el: HTMLElement, e: Event) => void> = {
 export function initKBConfigPanel(): void {
   document.getElementById('kb-btn-manage-config')?.addEventListener('click', () => openKBConfigPanel());
 
-  const body = document.getElementById('kb-config-panel-body');
-  if (body) {
-    delegateAction(body, 'click', clickHandlers);
-    delegateAction(body, 'change', changeHandlers);
-    delegateAction(body, 'keydown', keydownHandlers);
-  }
-
-  // 点击遮罩空白处关闭（点击弹层本身不关闭）
+  // 委托挂载在弹层根节点：modal-head 的关闭按钮与 body 内动态渲染的内容都经它冒泡
   const overlay = document.getElementById('kb-config-modal');
-  overlay?.addEventListener('click', (e) => {
-    if ((e as MouseEvent).target === overlay) closeKBConfigPanel();
-  });
+  if (overlay) {
+    delegateAction(overlay, 'click', clickHandlers);
+    delegateAction(overlay, 'change', changeHandlers);
+    delegateAction(overlay, 'keydown', keydownHandlers);
+
+    // 点击遮罩空白处关闭（点击弹层本身不关闭）
+    overlay.addEventListener('click', (e) => {
+      if ((e as MouseEvent).target === overlay) closeKBConfigPanel();
+    });
+  }
 
   // Escape 关闭
   document.addEventListener('keydown', (e) => {

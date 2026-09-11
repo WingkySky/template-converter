@@ -162,28 +162,34 @@ describe('任务清单增删改', () => {
 });
 
 describe('事件接线', () => {
-  it('initKBConfigPanel 注册委托与打开按钮；data-action 分发关闭弹层', () => {
+  it('initKBConfigPanel 在弹层根节点注册委托与打开按钮', () => {
     initKBConfigPanel();
-    const body = dom.el('kb-config-panel-body');
-    expect(body.listeners.get('click')?.length).toBe(1);
-    expect(body.listeners.get('change')?.length).toBe(1);
-    expect(body.listeners.get('keydown')?.length).toBe(1);
+    const overlay = dom.el('kb-config-modal');
     expect(dom.el('kb-btn-manage-config').listeners.get('click')?.length).toBe(1);
-    dom.el('kb-config-modal').classList.remove('hidden');
-    const handler = body.listeners.get('click')![0];
-    handler({ target: { closest: () => ({ dataset: { action: 'kbcmClose' } }) } });
-    expect(dom.el('kb-config-modal').classList.contains('hidden')).toBe(true);
+    // click ×2：data-action 委托 + 遮罩空白关闭；change/keydown ×1：委托
+    expect(overlay.listeners.get('click')?.length).toBe(2);
+    expect(overlay.listeners.get('change')?.length).toBe(1);
+    expect(overlay.listeners.get('keydown')?.length).toBe(1);
+  });
+
+  it('modal-head 内的关闭按钮经根节点委托关闭弹层（回归：按钮在 body 外）', () => {
+    initKBConfigPanel();
+    const overlay = dom.el('kb-config-modal');
+    overlay.classList.remove('hidden');
+    const delegate = overlay.listeners.get('click')![0];
+    delegate({ target: { closest: () => ({ dataset: { action: 'kbcmClose' } }) } });
+    expect(overlay.classList.contains('hidden')).toBe(true);
   });
 
   it('点击遮罩自身关闭，点击弹层内部不关闭', () => {
     initKBConfigPanel();
     const overlay = dom.el('kb-config-modal');
-    const handler = overlay.listeners.get('click')![0];
+    const backdropHandler = overlay.listeners.get('click')![1];
     overlay.classList.remove('hidden');
-    handler({ target: overlay });
+    backdropHandler({ target: overlay });
     expect(overlay.classList.contains('hidden')).toBe(true);
     overlay.classList.remove('hidden');
-    handler({ target: {} });
+    backdropHandler({ target: {} });
     expect(overlay.classList.contains('hidden')).toBe(false);
   });
 });

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "exceljs": "4.4.0",
+    "pdfjs-dist": "4.10.38",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.1/xlsx-0.20.1.tgz"
   },
   "devDependencies": {

@@ -80,6 +80,24 @@ export function processFile(file: File): void {
       onFileParsed();
     };
     reader.readAsArrayBuffer(file);
+  } else if (ext === 'pdf') {
+    const reader = new FileReader();
+    reader.onload = async e => {
+      try {
+        const data = (e.target as FileReader).result as ArrayBuffer;
+        // 按需加载 pdf.js（仅 PDF 分支触达；Node 回归驱动器不会执行到这里）
+        const { parsePdfSource } = await import('../../core/parser/pdf');
+        const items = await parsePdfSource(data, file.name);
+        items.forEach(item => state.sources.push(item));
+        onFileParsed();
+      } catch (err) {
+        console.error('PDF 解析失败', err);
+        alert(`PDF 解析失败：${err instanceof Error ? err.message : String(err)}`);
+        state.pendingFiles--;
+        if (state.pendingFiles <= 0) updateAccumIndicator();
+      }
+    };
+    reader.readAsArrayBuffer(file);
   } else {
     alert('不支持的文件格式');
     state.pendingFiles--;

@@ -25,7 +25,7 @@
     <div class="app-title">灵工发放模版转换工具<span class="en">GIG PAYROLL TEMPLATE CONVERTER</span></div>
     <div class="meta">
       <div>LOCAL · PURE FRONTEND</div>
-      <div>XLSX / CSV → 4 TEMPLATES</div>
+      <div>XLSX / CSV / PDF → 4 TEMPLATES</div>
     </div>
     <button id="theme-toggle" class="btn btn-secondary theme-toggle" aria-label="切换明暗主题" title="切换明暗主题"></button>
   </header>
@@ -70,12 +70,12 @@
       上传样例文件
     </div>
     <div class="upload-area" id="upload-area">
-      <input type="file" id="file-input" accept=".csv,.xlsx,.xls" multiple>
+      <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.pdf" multiple>
       <div class="icon" data-icon="upload" data-size="34"></div>
-      <div class="title">点击或拖拽上传 CSV / Excel 文件</div>
+      <div class="title">点击或拖拽上传 CSV / Excel / PDF 文件</div>
       <div class="desc">
         支持同时上传多个文件，系统会智能识别数据表<br>
-        <em>支持 CSV（UTF-8 / GBK）和 Excel（.xlsx / .xls）格式</em>
+        <em>支持 CSV（UTF-8 / GBK）、Excel（.xlsx / .xls）与文字版 PDF（.pdf）格式</em>
       </div>
     </div>
     <div id="accum-indicator" class="hidden" style="margin-top:12px;"></div>

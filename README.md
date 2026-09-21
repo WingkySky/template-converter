@@ -1,12 +1,13 @@
 # 灵工发放模版转换工具
 
-一款基于浏览器的在线工具，用于将 CSV/Excel 数据文件快速转换为多个灵活用工平台的导入模版。纯前端实现，无需后端。
+一款基于浏览器的在线工具，用于将 CSV/Excel/PDF 数据文件快速转换为多个灵活用工平台的导入模版。纯前端实现，无需后端。
 
 ## 功能特性
 
 ### 智能识别
 - 自动识别数据列类型：姓名、身份证、手机号、开户银行、银行卡号、税前金额、性别、开户地/税源地、备注
-- 支持 CSV（UTF-8/GBK 自动重试）和 Excel（.xlsx/.xls）
+- 支持 CSV（UTF-8/GBK 自动重试）、Excel（.xlsx/.xls）和文字版 PDF（.pdf）
+- PDF 表格智能还原：按文本坐标重建行列，自动拼合折行表头（如「服务人员/姓名」→「服务人员姓名」）、去除卡号排版空格、过滤合计/总计行；扫描件/图片型 PDF 不支持
 - 多文件上传，自动合并分析；智能跳过费用/汇总行，支持双行表头
 - 知识库（商社/任务数据）自动填充商社编号、平台、税源地、任务清单、工种、批次号
 
@@ -37,12 +38,12 @@ npm run preview    # 本地预览构建产物
 
 ### 双击使用（免部署）
 
-`npm run build:single` 产出约 1.5MB 的 `dist-single/index.html`，JS/CSS/xlsx/exceljs 全部内联、零外部请求，**双击即可在浏览器中打开使用**（file:// 下内联模块不受 CORS 限制，已用无头浏览器实测）。适合邮件/IM 分发给同事单机使用。注意：单文件模式下 localStorage 按文件来源隔离，与挂网版本的知识库互不相通。
+`npm run build:single` 产出约 3.6MB 的 `dist-single/index.html`，JS/CSS/xlsx/exceljs/pdf.js 全部内联、零外部请求，**双击即可在浏览器中打开使用**（file:// 下内联模块不受 CORS 限制，已用无头浏览器实测；pdf.js 以主线程模式运行，避免 Worker 在 file:// 下的兼容问题）。适合邮件/IM 分发给同事单机使用。注意：单文件模式下 localStorage 按文件来源隔离，与挂网版本的知识库互不相通。
 
 ## 测试与回归保障
 
 ```bash
-npm run test       # Vitest 单元测试（270+，覆盖解析/映射/知识库/导出全链路）
+npm run test       # Vitest 单元测试（320+，覆盖解析/映射/知识库/导出全链路）
 npm run compare    # 样例对比：32 用例 × 4 模版 × 6 导出模式，与基线产物逐格比对
 npm run baseline   # 重新生成基线（仅在有意变更行为时执行）
 ```
@@ -57,7 +58,7 @@ src/
 ├── state.ts           # 全局状态（AppState 接口）——core 层禁止 import
 ├── types.ts           # 共享领域类型
 ├── core/              # ★ 纯逻辑：无 DOM/localStorage 依赖，全部可单测
-│   ├── parser/        # CSV(GBK)/Excel 解析、智能表格识别、双行表头
+│   ├── parser/        # CSV(GBK)/Excel/PDF 解析、智能表格识别、双行表头
 │   ├── mapping/       # 列类型推断、金额列打分
 │   ├── clean/         # 金额清洗、身份证形近字符归一
 │   ├── kb/            # 知识库模型、商社匹配、税源/任务/批次推断

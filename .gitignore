@@ -42,6 +42,7 @@ verify*.js
 !tests/fixtures
 !tests/fixtures/*.xlsx
 !tests/fixtures/*.csv
+!tests/fixtures/*.pdf
 !tests/fixtures/baseline
 !tests/fixtures/baseline/**
 dist/

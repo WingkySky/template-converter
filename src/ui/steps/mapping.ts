@@ -20,7 +20,7 @@ export function showMappingStep(): void {
   let sourceHTML = '';
   if (state.sources.length > 1 || !sel.length) {
     const cards = state.sources.map(item => {
-      const desc = item.type === 'excel-sheet' ? `${item.fileName} / ${item.sheetName}` : item.fileName;
+      const desc = item.type === 'excel-sheet' || item.type === 'pdf' ? `${item.fileName} / ${item.sheetName}` : item.fileName;
       const isP = item.id === state.previewSourceId;
       return `
         <div style="padding:10px;border:1px solid ${isP?'var(--accent)':(item.selected?'var(--border-strong)':'var(--border)')};border-radius:8px;background:${isP?'var(--accent-soft)':(item.selected?'var(--surface)':'var(--surface2)')};">

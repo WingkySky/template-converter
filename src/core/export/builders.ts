@@ -1,7 +1,8 @@
 // 目标模版工作簿构建器 —— 自 src/legacy.js 逐字搬移（阶段 1 分区 C），仅补充类型注解
 // 与显式 import，不改变任何行为。阶段 4 再收敛进 core/templates 注册表。
 // 位置锚点：buildYidaoWorkbook legacy.js L3575，buildShenbianyunWorkbook L3590（→
-// buildShenbianyunWorkbookCore，原读 state.sbyShowBatchInfo/sbyPlainAmount 改经 options 传入），
+// buildShenbianyunWorkbookCore，原读 state.sbyShowBatchInfo/sbyPlainAmount 改经 options 传入；
+// 2026-09 随新版批量付款导入模板重写布局，sbyShowBatchInfo 随总笔数/总金额下线移除），
 // buildYouyiWorkbook L3672（→ 依赖注入 kb 与配置/任务清单生成器，core 禁读 localStorage），
 // buildGenericWorkbook L3702。
 import * as XLSX from 'xlsx';
@@ -22,14 +23,13 @@ export function buildYidaoWorkbook(headers: string[], rows: Rows): XLSX.WorkBook
   return wb;
 }
 
-/** 身边云导出选项（原读 state.sbyShowBatchInfo / state.sbyPlainAmount，搬移后经参数传入） */
+/** 身边云导出选项（原读 state.sbyPlainAmount，搬移后经参数传入；showBatchInfo 随新版模板总笔数/总金额下线而移除） */
 export interface ShenbianyunOptions {
-  showBatchInfo: boolean;
   plainAmount: boolean;
 }
 
-// 身边云: 使用 ExcelJS 保留原版模板完整样式
-// Row1=instructions(merged A1:H1), Row2=batch labels, Row3=batch values, Row4=header, Row5+=data
+// 身边云: 使用 ExcelJS 保留原版模板完整样式（2026-09 新版批量付款导入模板）
+// Row1=instructions(merged A1:I1), Row2=batch label, Row3=batch value, Row4=header, Row5+=data
 export async function buildShenbianyunWorkbookCore(
   headers: string[],
   rows: Rows,
@@ -37,53 +37,44 @@ export async function buildShenbianyunWorkbookCore(
   options: ShenbianyunOptions
 ): Promise<{ __exceljsBuffer: ExcelJS.Buffer }> {
   const amountIdx = headers.indexOf('付款金额（元，必填）');
-  const totalAmount = rows.reduce((sum, row) => sum + (parseFloat(String(row[amountIdx] || '').replace(/,/g, '')) || 0), 0);
 
-  const { showBatchInfo, plainAmount } = options;
+  const { plainAmount } = options;
   const amtFmt = plainAmount ? '#,##0.00' : '¥#,##0.00';
 
   const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('个人银行账户批量付款模板');
+  const ws = wb.addWorksheet('Sheet1');
 
-  // 列宽（与原版模板一致）
-  const colWidths = [20.15, 34.0, 26.08, 20.15, 20.15, 20.15, 14.39, 22.45];
+  // 列宽（与新版模板一致）
+  const colWidths = [22.6333333333333, 20.6333333333333, 22.6333333333333, 20.5, 27.5, 22.6333333333333, 16, 16, 22.6333333333333];
   colWidths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
 
-  // 各列数字格式（金额列根据选项切换货币/纯数字）
-  const colNumFmts = ['@', '@', '@', amtFmt, amtFmt, '@', amtFmt, amtFmt];
+  // 各列数字格式（新版模板仅金额列为数值格式，其余列均为文本；金额列根据选项切换货币/纯数字）
+  const colNumFmts = ['@', '@', '@', '@', '@', amtFmt, '@', '@', '@'];
 
-  // Row 1: 说明文字（合并 A1:H1）
-  ws.getRow(1).height = 121;
-  ws.mergeCells('A1:H1');
+  // Row 1: 说明文字（合并 A1:I1）
+  ws.getRow(1).height = 150;
+  ws.mergeCells('A1:I1');
   const cellA1 = ws.getCell('A1');
-  cellA1.value = '单批次最大支持12000条订单。\n商户订单号纯数字并且唯一，禁止重复。\n付款金额保留两位小数，四舍五入。\n备注字段最大限制20字，银行备注展示限制具体以银行为准。\n付款文件名称或备注存在以下字段会导致文件上传失败：工资、薪酬、提现、薪、补贴、分红、奖金、返现、劳务费、分润、备用金、¥、$\n银行卡号建议使用一类户，如使用二类户日限额导致交易退汇，需T+8个工作日退回';
+  cellA1.value = '单批次最大支持12000条订单。\n商户订单号纯数字并且唯一，禁止重复。\n多任务模式时任务ID必填（单次最多50个任务），单任务模式时不可填任务ID。\n收款账号需要与所选收款方式对应匹配，银行卡方式对应个人银行卡号、支付宝方式对应支付宝号、微信方式对应OpenID。\n付款金额保留两位小数，四舍五入。\n备注字段最大限制20字，银行备注展示限制具体以银行为准。\n付款文件名称或备注存在以下字段会导致文件上传失败：工资、薪酬、提现、薪、补贴、分红、奖金、返现、劳务费、分润、备用金、¥、$\n银行卡号建议使用一类户，如使用二类户日限额导致交易退汇，需T+8个工作日退回';
   cellA1.font = { name: '微软雅黑', size: 12, color: { argb: 'FFFF0000' } };
   cellA1.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
   cellA1.numFmt = '@';
 
-  // Row 2: 批次标签（始终保留，A2/B2/C2 有样式，与原版一致）
-  const batchLabels = ['商户批次号（非必填）', '总笔数（非必填）', '总金额（元，非必填）'];
-  batchLabels.forEach((label, i) => {
-    const cell = ws.getCell(2, i + 1);
-    cell.value = label;
-    cell.font = { name: '微软雅黑', size: 12, color: { argb: 'FF9C6500' } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEB9C' } };
-    cell.alignment = { horizontal: 'center', vertical: 'middle' };
-    cell.numFmt = '@';
-  });
+  // Row 2: 批次号标签（新版模板仅剩商户批次号，总笔数/总金额字段已下线）
+  ws.getRow(2).height = 17.25;
+  const cellA2 = ws.getCell('A2');
+  cellA2.value = '商户批次号（非必填）';
+  cellA2.font = { name: '微软雅黑', size: 12, color: { argb: 'FF9C6500' } };
+  cellA2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFEB9C' } };
+  cellA2.alignment = { horizontal: 'center', vertical: 'middle' };
+  cellA2.numFmt = '@';
 
-  // Row 3: 批次值（始终保留结构；B3/C3 根据选项决定是否填入数字）
+  // Row 3: 批次号值
   const cellA3 = ws.getCell('A3');
   cellA3.value = batchNo || '';
-  const cellB3 = ws.getCell('B3');
-  cellB3.value = showBatchInfo ? (rows.length || '') : '';
-  const cellC3 = ws.getCell('C3');
-  cellC3.value = (showBatchInfo && totalAmount) ? Math.round(totalAmount * 100) / 100 : '';
-  cellC3.font = { name: '微软雅黑', size: 12 };
-  cellC3.alignment = { horizontal: 'center', vertical: 'middle' };
-  cellC3.numFmt = amtFmt;
 
-  // Row 4: 表头（与原版一致的绿色样式）
+  // Row 4: 表头（与新版模板一致的绿色样式）
+  ws.getRow(4).height = 17.25;
   headers.forEach((header, i) => {
     const cell = ws.getCell(4, i + 1);
     cell.value = header;

@@ -19,7 +19,6 @@ export interface TemplateOutputCache {
   outputRows: Rows | null;
   outputRowMeta: OutputRowMeta[];
   batchNo?: string;
-  sbyShowBatchInfo?: boolean;
   sbyPlainAmount?: boolean;
 }
 
@@ -66,7 +65,6 @@ export interface AppState {
   lastSaveDir: FileSystemFileHandleLike | null;
   colIndex: Record<string, number>;
   columnFilters: Record<string, Set<string>>;
-  sbyShowBatchInfo: boolean;
   sbyPlainAmount: boolean;
   exportMode: 'merge' | 'byFile' | 'bySheet';
   splitBatches: Record<string, { batchNo: string; shangSheId: string; shangSheName: string }>;
@@ -109,8 +107,7 @@ export const state = {
   colIndex: {} as Record<string, number>,
   // 列筛选状态：{ colIdx: Set(允许的值) }
   columnFilters: {} as Record<string, Set<string>>,
-  // 身边云导出选项
-  sbyShowBatchInfo: false,   // 是否显示总笔数和总金额行（默认不显示）
+  // 身边云导出选项（总笔数/总金额已随新版导入模板下线，仅保留金额格式选项）
   sbyPlainAmount: true,      // 金额使用纯数字格式（默认纯数字，不带¥符号）
   // 导出模式: 'merge' 合并为一份 | 'byFile' 按文件拆分 | 'bySheet' 按数据表拆分
   exportMode: 'merge' as AppState['exportMode'],

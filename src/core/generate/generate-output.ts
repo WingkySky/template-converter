@@ -28,7 +28,6 @@ export interface GenerateInput {
   /** 原 `state.sources.filter(s => s.selected)`（客户名称/税号头部扫描用） */
   sources: ScanSource[];
   kb: KB;
-  sbyOptions: { showBatchInfo: boolean; plainAmount: boolean };
 }
 
 export interface GenerateResult {

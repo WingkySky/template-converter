@@ -26,7 +26,7 @@ function resetState() {
     targetTemplate: null, cleanCount: 0, exportMode: 'merge' as const,
     splitGroupList: [], splitBatches: {},
     batchNo: '', batchShangSheId: '', batchShangSheName: '',
-    shangSheCandidates: [], sbyShowBatchInfo: false, sbyPlainAmount: true,
+    shangSheCandidates: [], sbyPlainAmount: true,
     splitNamingRule: 'compact' as const,
   });
 }

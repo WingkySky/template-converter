@@ -137,7 +137,6 @@ function cloneTemplateOutputState() {
     batchNo: state.batchNo || '',
     batchShangSheId: state.batchShangSheId || '',
     batchShangSheName: state.batchShangSheName || '',
-    sbyShowBatchInfo: state.sbyShowBatchInfo,
     sbyPlainAmount: state.sbyPlainAmount
   };
 }
@@ -164,7 +163,6 @@ function restoreTemplateOutput(templateKey: string) {
   state.batchShangSheName = cached.batchShangSheName || '';
   // satisfies 使布尔字段收窄为字面量类型，改经 Object.assign 写入（语义不变）
   Object.assign(state, {
-    sbyShowBatchInfo: cached.sbyShowBatchInfo ?? false,
     sbyPlainAmount: cached.sbyPlainAmount ?? true,
   });
   return true;
@@ -200,7 +198,6 @@ export function generateOutput() {
     sourcesData,
     sources: state.sources.filter(s => s.selected),
     kb: loadKB(),
-    sbyOptions: { showBatchInfo: state.sbyShowBatchInfo, plainAmount: state.sbyPlainAmount },
   });
 
   // 原 batchMatch 分支的 state 写入（applyBatchShangShe 语义 / 未匹配时三字段清空）
@@ -473,7 +470,7 @@ export function getExportFileNameForTemplate(templateKey: string, ext: string) {
     meta: [],
     batchNo: getBatchNoForTemplate(templateKey),
     kb: loadKB(),
-    options: { showBatchInfo: state.sbyShowBatchInfo, plainAmount: state.sbyPlainAmount },
+    options: { plainAmount: state.sbyPlainAmount },
   };
   return buildFileNameForTemplate(templateKey, ext, ctx);
 }
@@ -558,7 +555,6 @@ export async function buildSplitFilesForTemplates(templateKeys: string[], ext: s
       outputHeaders: string[] | null;
       outputRows: Rows | null;
       outputRowMeta: OutputRowMeta[];
-      sbyShowBatchInfo?: boolean;
       sbyPlainAmount?: boolean;
     };
     if (templateKey === currentTemplate) {
@@ -566,7 +562,6 @@ export async function buildSplitFilesForTemplates(templateKeys: string[], ext: s
         outputHeaders: state.outputHeaders,
         outputRows: state.outputRows,
         outputRowMeta: state.outputRowMeta,
-        sbyShowBatchInfo: state.sbyShowBatchInfo,
         sbyPlainAmount: state.sbyPlainAmount,
       };
     } else {
@@ -592,7 +587,6 @@ export async function buildSplitFilesForTemplates(templateKeys: string[], ext: s
       } else {
         // satisfies 使布尔字段收窄为字面量类型，改经 Object.assign 写入（语义不变）
         Object.assign(state, {
-          sbyShowBatchInfo: out.sbyShowBatchInfo ?? false,
           sbyPlainAmount: out.sbyPlainAmount ?? true,
         });
         const batchNo = templateKey === 'shenbianyun' ? (state.splitBatches?.[g.key]?.batchNo || '') : '';
@@ -650,7 +644,7 @@ export async function buildWorkbookForTemplate(templateKey: string, headers: str
     meta: state.outputRowMeta,
     batchNo: batchNoOverride != null ? batchNoOverride : getBatchNoForTemplate(templateKey),
     kb: loadKB(),
-    options: { showBatchInfo: state.sbyShowBatchInfo, plainAmount: state.sbyPlainAmount },
+    options: { plainAmount: state.sbyPlainAmount },
   };
   return buildWorkbookFromRegistry(templateKey, ctx);
 }
@@ -679,7 +673,6 @@ async function exportSelectedExcel() {
     if (!cached?.outputHeaders || !cached?.outputRows) continue;
     // 恢复该模版缓存的身边云导出选项
     Object.assign(state, {
-      sbyShowBatchInfo: cached.sbyShowBatchInfo ?? false,
       sbyPlainAmount: cached.sbyPlainAmount ?? true,
     });
     const wb = await buildWorkbookForTemplate(templateKey, cached.outputHeaders, cached.outputRows);

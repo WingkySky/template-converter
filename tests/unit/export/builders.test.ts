@@ -68,75 +68,70 @@ describe('buildYouyiWorkbook', () => {
 });
 
 describe('buildShenbianyunWorkbookCore', () => {
+  // 与 shenbianyun 模版注册表一致的新版 9 列表头（2026-09 批量付款导入模板：新增任务ID列、
+  // 个人银行卡号更名收款账号；任务ID 无源数据字段对应，恒留空）
   const HEADERS = [
-    '付款账号（必填）', '付款名称（必填）', '商户订单号（必填）', '付款金额（元，必填）',
-    '付款金额（备用）', '收款账号（必填）', '收款名称（必填）', '收款银行（必填）',
+    '商户订单号（非必填）', '任务ID（条件必填）', '收款人姓名（必填）', '身份证号（必填）',
+    '收款账号（条件必填）', '付款金额（元，必填）', '手机号（必填）', '备注（非必填）', '自定义备注（非必填）',
   ];
   const ROWS = [
-    ['A100', '测试付款方', 'PO001', '1,234.56', '10.00', 'B200', '张三', '工商银行'],
-    ['A101', '测试付款方', 'PO002', '10', '0', 'B201', '李四', '建设银行'],
+    ['', '', '张三', '110101199001011234', '6222021234567890123', '1,234.56', '13800138000', '测试备注1', ''],
+    ['', '', '李四', '110101199002022345', '6222029876543210987', '10', '13900139000', '测试备注2', ''],
   ];
 
-  async function loadCore(headers: string[], rows: string[][], batchNo: string, options: { showBatchInfo: boolean; plainAmount: boolean }) {
+  async function loadCore(headers: string[], rows: string[][], batchNo: string, options: { plainAmount: boolean }) {
     const result = await buildShenbianyunWorkbookCore(headers, rows, batchNo, options);
     // 返回形状保持不变：{ __exceljsBuffer }
     expect(result).toHaveProperty('__exceljsBuffer');
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(result.__exceljsBuffer as ExcelJS.Buffer);
-    const ws = wb.getWorksheet('个人银行账户批量付款模板');
+    const ws = wb.getWorksheet('Sheet1');
     expect(ws).toBeDefined();
     return ws!;
   }
 
-  it('说明行合并 A1:H1 且含原文；批次行标签/样式始终保留；表头行绿色样式', async () => {
-    const ws = await loadCore(HEADERS, ROWS, 'B20260907-01', { showBatchInfo: false, plainAmount: true });
+  it('说明行合并 A1:I1 且含新版原文（任务ID/收款账号规则）；批次行仅剩商户批次号标签', async () => {
+    const ws = await loadCore(HEADERS, ROWS, 'B20260907-01', { plainAmount: true });
 
-    expect(ws.model.merges).toContain('A1:H1');
+    expect(ws.model.merges).toContain('A1:I1');
     expect(String(ws.getCell('A1').value)).toContain('单批次最大支持12000条订单。');
+    expect(String(ws.getCell('A1').value)).toContain('多任务模式时任务ID必填（单次最多50个任务），单任务模式时不可填任务ID。');
+    expect(String(ws.getCell('A1').value)).toContain('收款账号需要与所选收款方式对应匹配，银行卡方式对应个人银行卡号、支付宝方式对应支付宝号、微信方式对应OpenID。');
 
     expect(ws.getCell('A2').value).toBe('商户批次号（非必填）');
-    expect(ws.getCell('B2').value).toBe('总笔数（非必填）');
-    expect(ws.getCell('C2').value).toBe('总金额（元，非必填）');
-    expect(ws.getCell('B2').font?.color?.argb).toBe('FF9C6500');
-    expect((ws.getCell('B2').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFFFEB9C');
+    expect(ws.getCell('B2').value).toBeNull(); // 新版模板总笔数/总金额标签已下线
+    expect(ws.getCell('A2').font?.color?.argb).toBe('FF9C6500');
+    expect((ws.getCell('A2').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFFFEB9C');
 
-    expect(ws.getCell('A4').value).toBe('付款账号（必填）');
-    expect(ws.getCell('D4').value).toBe('付款金额（元，必填）');
+    expect(ws.getCell('A4').value).toBe('商户订单号（非必填）');
+    expect(ws.getCell('B4').value).toBe('任务ID（条件必填）');
+    expect(ws.getCell('E4').value).toBe('收款账号（条件必填）');
     expect(ws.getCell('A4').font?.color?.argb).toBe('FF006100');
     expect((ws.getCell('A4').fill as ExcelJS.FillPattern).fgColor?.argb).toBe('FFC6EFCE');
   });
 
-  it('纯数字金额 + 不显示批次信息：B3/C3 留空，金额列 #,##0.00，千分位金额解析为数字', async () => {
-    const ws = await loadCore(HEADERS, ROWS, 'B20260907-01', { showBatchInfo: false, plainAmount: true });
+  it('批次号写入 A3；B3/C3 不再写入任何内容；金额列 #,##0.00，千分位金额解析为数字', async () => {
+    const ws = await loadCore(HEADERS, ROWS, 'B20260907-01', { plainAmount: true });
 
     expect(ws.getCell('A3').value).toBe('B20260907-01');
-    expect(ws.getCell('B3').value).toBe('');
-    expect(ws.getCell('C3').value).toBe('');
+    expect(ws.getCell('B3').value).toBeNull();
+    expect(ws.getCell('C3').value).toBeNull();
 
-    // 数据从第 5 行开始；'1,234.56' → 1234.56（去掉千分位、保留两位）
-    expect(ws.getCell('D5').value).toBe(1234.56);
-    expect(ws.getCell('D6').value).toBe(10);
-    expect(ws.getCell('D5').numFmt).toBe('#,##0.00');
-    expect(ws.getCell('C3').numFmt).toBe('#,##0.00');
-    // 非金额列保持文本格式与原值
-    expect(ws.getCell('A5').numFmt).toBe('@');
-    expect(ws.getCell('A5').value).toBe('A100');
-    expect(ws.getCell('H6').value).toBe('建设银行');
+    // 数据从第 5 行开始；'1,234.56' → 1234.56（去掉千分位、保留两位），金额在第 6 列（F）
+    expect(ws.getCell('F5').value).toBe(1234.56);
+    expect(ws.getCell('F6').value).toBe(10);
+    expect(ws.getCell('F5').numFmt).toBe('#,##0.00');
+    // 非金额列保持文本格式与原值（新版模板仅金额列为数值格式，身份证/收款账号列不再带货币格式）
+    expect(ws.getCell('E5').numFmt).toBe('@');
+    expect(ws.getCell('E5').value).toBe('6222021234567890123');
+    expect(ws.getCell('B5').value).toBe('');
   });
 
-  it('显示批次信息 + 货币金额：B3=总笔数、C3=总金额，金额格式 ¥#,##0.00', async () => {
-    const ws = await loadCore(HEADERS, ROWS, '', { showBatchInfo: true, plainAmount: false });
+  it('货币金额：金额列格式 ¥#,##0.00；批次号为空时 A3 留空', async () => {
+    const ws = await loadCore(HEADERS, ROWS, '', { plainAmount: false });
 
     expect(ws.getCell('A3').value).toBe('');
-    expect(ws.getCell('B3').value).toBe(2);
-    expect(ws.getCell('C3').value).toBe(1244.56);
-    expect(ws.getCell('C3').numFmt).toBe('¥#,##0.00');
-    expect(ws.getCell('D5').numFmt).toBe('¥#,##0.00');
-  });
-
-  it('showBatchInfo 但总金额为 0 时 C3 留空（沿用原 truthy 判断）', async () => {
-    const ws = await loadCore(['付款金额（元，必填）'], [['0']], '', { showBatchInfo: true, plainAmount: true });
-    expect(ws.getCell('B3').value).toBe(1);
-    expect(ws.getCell('C3').value).toBe('');
+    expect(ws.getCell('F5').numFmt).toBe('¥#,##0.00');
+    expect(ws.getCell('F5').value).toBe(1234.56);
   });
 });

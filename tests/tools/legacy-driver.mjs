@@ -109,7 +109,7 @@ async function collectArtifacts(w, state, template, mode) {
   return out;
 }
 
-export async function runCase({ id, files, template, sbyPlainAmount = true, sbyShowBatchInfo = false }) {
+export async function runCase({ id, files, template, sbyPlainAmount = true }) {
   const { w } = getLoaded();
   const { state } = w.__legacy;
   w.resetAll();
@@ -117,9 +117,8 @@ export async function runCase({ id, files, template, sbyPlainAmount = true, sbyS
   w.confirmMapping(); // 等价于用户点击「确认映射」：构建 mappingState.sourcesData
   w.selectTemplate(template);
   w.confirmTemplate();
-  if (template === 'shenbianyun' && (!sbyPlainAmount || sbyShowBatchInfo)) {
+  if (template === 'shenbianyun' && !sbyPlainAmount) {
     state.sbyPlainAmount = sbyPlainAmount;
-    state.sbyShowBatchInfo = sbyShowBatchInfo;
     w.generateOutput();
   }
   const artifacts = [

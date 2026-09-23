@@ -128,11 +128,9 @@ function updateSplitPreview(key: string): void {
 }
 
 export function onSbyOptionChange(): void {
-  const showBatchEl = document.getElementById('sby-show-batch-info') as HTMLInputElement | null;
   const plainAmountEl = document.getElementById('sby-plain-amount') as HTMLInputElement | null;
-  // state.ts 的 satisfies 使这两个布尔字段被收窄为字面量类型，改经 Object.assign 写入（语义不变）
+  // state.ts 的 satisfies 使该布尔字段被收窄为字面量类型，改经 Object.assign 写入（语义不变）
   Object.assign(state, {
-    sbyShowBatchInfo: showBatchEl ? showBatchEl.checked : false,
     sbyPlainAmount: plainAmountEl ? plainAmountEl.checked : true,
   });
   cacheCurrentTemplateOutput();
@@ -384,10 +382,6 @@ export function renderExportControls(): string {
     sbyOptionsHTML = `
     <div style="background:var(--surface2);border-radius:8px;padding:12px 16px;border:1px solid var(--border);margin-bottom:12px;">
       <div style="font-size:13px;font-weight:600;margin-bottom:10px;">${icon('cloud', 14)} 身边云导出选项</div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin-bottom:8px;">
-        <input type="checkbox" id="sby-show-batch-info" data-action="onSbyOptionChange" ${state.sbyShowBatchInfo?'checked':''} style="accent-color:var(--accent);">
-        填写总笔数和总金额（不勾选则留空）
-      </label>
       <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
         <input type="checkbox" id="sby-plain-amount" data-action="onSbyOptionChange" ${state.sbyPlainAmount?'checked':''} style="accent-color:var(--accent);">
         金额使用纯数字格式（不带 ¥ 符号）

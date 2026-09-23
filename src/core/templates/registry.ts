@@ -19,7 +19,7 @@ export interface TemplateContext {
   meta: OutputRowMeta[];
   batchNo: string;
   kb: KB;
-  options: { showBatchInfo: boolean; plainAmount: boolean };
+  options: { plainAmount: boolean };
   templateFile?: ArrayBuffer | Uint8Array;
 }
 

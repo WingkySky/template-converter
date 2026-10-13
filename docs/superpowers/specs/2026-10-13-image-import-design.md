@@ -120,6 +120,20 @@ upload.ts 图片分支（动态 import） ────────────�
 - 硬约束：所选服务必须**支持浏览器 CORS 直连**，否则被浏览器拦截
   （报错文案解释原因并给排查建议）；**不做代理后端**。
 
+### 5.3 云端服务选型记录（2026-10-13 用户提供三个方向，按项目硬约束取舍）
+
+- **采纳：Agnes AI `agnes-3.0-flash`**（`https://apihub.agnes-ai.com/v1`，OpenAI 兼容
+  chat/completions，支持 image_url 图片输入，文档现价 $0、需自注册 API key）——
+  满足全部硬约束（OpenAI 兼容 / 图片输入 / 免费 / key 自填），作为**首发目标服务**与
+  设置面板的默认示例文案；配置仍是通用 `baseURL/key/model` 三件套，任何兼容视觉服务可替换。
+- **不采用（本期）：AiBridge**（WingkySky/AiBridge，Rust 核心 + napi-rs 原生绑定的多模型
+  SDK，38+ providers 含 agnes）——JS 绑定为 Node 原生模块，**无法在浏览器/纯静态挂网环境
+  运行**；且本项目仅需一次 OpenAI 兼容 fetch，引 SDK 属过度设计。**未来方向**：若做 Node 端
+  批量转换 CLI（离线批处理、无浏览器），AiBridge 是合适底座，届时 Provider 抽象可直接迁移。
+- **排除：Agnes-Media-Create**（WingkySky/Agnes-Media-Create，Agnes Image/Video API 的媒体
+  **生成** Python CLI skill，文生图/图生视频）——与表格**识别**方向无关，且为 Python CLI，
+  无法嵌入纯前端。
+
 ## 6. 校验层（两引擎共用，零容错的兜底）
 
 - 字段级：金额格式（数字 + 两位小数）、身份证 **17 位加权校验位验算**、手机号 `1[3-9]` 开头 11 位、
@@ -183,6 +197,7 @@ upload.ts 图片分支（动态 import） ────────────�
 | 风险 | 对策 |
 |---|---|
 | LLM 服务 CORS 支持参差 | 文档与报错明示约束；实施首日用候选服务实测连通性；不做代理兜底 |
+| Agnes `image_url` 文档仅示例公网 URL，base64 dataURL 未必支持 | 实施首日与 CORS 一并用最小 demo 实测；若不支持则设置面板引导换任一支持 dataURL 的兼容服务（Provider 抽象保证零成本替换） |
 | tesseract.js v7 word 级输出 API 与文档偏差 | 实施第 1 天先用最小 demo 验证 createWorker/显式开启 blocks，再接入 |
 | 扫描 PDF 大页渲染内存峰值 | 页级串行渲染 + 及时释放；限制单图尺寸 |
 | 本地引擎准确率不达标 | 前处理参数标定空间大（放大倍数/二值化阈值）；校验层自动揪错；人工校对是最终防线 |

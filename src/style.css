@@ -490,6 +490,10 @@ body {
 }
 .result-table td.ocr-issue:hover { outline: 1px solid var(--red-border); }
 
+/* 姓名列清洗标记（橙底=有注记被剥离；悬停见原值，点击可修改） */
+.result-table td.name-cleaned { background: var(--orange-soft); }
+.result-table td.name-cleaned:hover { outline: 1px solid var(--orange-border); }
+
 /* 识别设置弹层 */
 .ocrs-engine { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
 .ocrs-engine label { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; line-height: 1.6; cursor: pointer; }

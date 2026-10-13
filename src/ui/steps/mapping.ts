@@ -9,6 +9,7 @@ import type { Rows } from '../../types';
 import { smartDetectTable } from '../../core/parser/table-detect';
 import { detectColumnMapping, applyInferredNameByData, COL_TYPE_LABELS } from '../../core/mapping/column-detect';
 import { computeOcrValidation } from '../../core/image/validate';
+import { cleanNameCell } from '../../core/clean/names';
 import { updateAccumIndicator, invokeResetAll } from './upload';
 import { showTemplateStep } from './template';
 
@@ -58,6 +59,16 @@ export function showMappingStep(): void {
   const autoMap = detectColumnMapping(detected.headerRow, dataRows);
   // 图片源：表头非「姓名」（如「9月」月份标注）时按数据特征推断姓名列（opt-in，仅 source.ocr）
   if (source.ocr) applyInferredNameByData(detected.headerRow, dataRows, autoMap);
+  // 姓名列清洗统计（与 confirmMapping 同口径：用户编辑过的源不自动清洗）
+  const nameCiEntry = Object.entries(autoMap.cols).find(([, col]) => col.type === 'name');
+  const nameCi = nameCiEntry ? Number(nameCiEntry[0]) : null;
+  let nameCleanCount = 0;
+  if (nameCi != null && !source.dataRowsOverride) {
+    dataRows.forEach(r => {
+      const raw = String(r?.[nameCi] ?? '').trim();
+      if (raw && cleanNameCell(raw) !== raw) nameCleanCount++;
+    });
+  }
   // 图片源校验（设计 §6）：字段级格式/校验位 + 高频误读候选 + 列合计核对，渲染时现算
   const ocrValidation = source.ocr ? computeOcrValidation(source.rows, dataRows, autoMap.cols) : null;
   state.mappingState = {
@@ -90,13 +101,25 @@ export function showMappingStep(): void {
   let pvBody = '';
   for (let ri = 0; ri < pv; ri++) {
     pvBody += '<tr>' + colIndices.map(ci => {
-      const v = String((dataRows[ri]||[])[ci]||'');
-      // 图片源：校验问题格标红可点击（一键候选预填 prompt，确认后才写入——绝不静默改）
+      // 姓名列清洗预览（所见即所得）：展示清洗值，悬停见原值；所有源均可点击修改
+      const rawV = String((dataRows[ri]||[])[ci]||'');
+      let v = rawV;
+      let cleanTip = '';
+      if (nameCi != null && ci === nameCi && rawV && !source.dataRowsOverride) {
+        const cleaned = cleanNameCell(rawV);
+        if (cleaned !== rawV) {
+          v = cleaned;
+          cleanTip = `姓名清洗：${rawV} → ${cleaned}（点击可修改）`;
+        }
+      }
+      // 图片源：校验问题格标红（一键候选预填 prompt，确认后才写入——绝不静默改）
       const issue = ocrValidation?.issues[`${ri}:${ci}`];
-      const cls = issue ? ' class="ocr-issue"' : '';
-      const tip = issue ? ` title="${escapeHTML(issue.msg + (issue.fix ? `（点击可修正为 ${issue.fix}）` : '（点击可修正）'))}"` : '';
-      const act = source.ocr ? ` data-action="ocrEditCell" data-ri="${ri}" data-ci="${ci}"` : '';
-      return `<td${cls}${tip}${act}>${v?escapeHTML(v):'<span style="color:var(--text2);opacity:0.4;">—</span>'}</td>`;
+      const classes = [issue ? 'ocr-issue' : '', cleanTip ? 'name-cleaned' : ''].filter(Boolean).join(' ');
+      const cls = classes ? ` class="${classes}"` : '';
+      const tip = issue
+        ? ` title="${escapeHTML(issue.msg + (issue.fix ? `（点击可修正为 ${issue.fix}）` : '（点击可修正）'))}"`
+        : cleanTip ? ` title="${escapeHTML(cleanTip)}"` : '';
+      return `<td${cls}${tip} data-action="editCell" data-ri="${ri}" data-ci="${ci}">${v?escapeHTML(v):'<span style="color:var(--text2);opacity:0.4;">—</span>'}</td>`;
     }).join('') + '</tr>';
   }
   if (dataRows.length > pv) pvBody += `<tr><td colspan="${colIndices.length}" style="text-align:center;color:var(--text2);font-size:12px;padding:8px;">… 还有 ${dataRows.length-pv} 行</td></tr>`;
@@ -108,6 +131,7 @@ export function showMappingStep(): void {
       <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('list', 14)} 识别 <strong style="color:var(--accent2);">${colIndices.length}</strong> 列</div>
       ${detected.headerRowIndex>0?`<div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('arrowLeft', 12)} 跳过前 ${detected.headerRowIndex} 行</div>`:''}
       ${detected.filteredCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('filter', 14)} 已自动过滤 <strong>${detected.filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
+      ${nameCleanCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('eraser', 14)} 姓名列已清洗 <strong>${nameCleanCount}</strong> 处注记（预览格悬停可见原值，点击可修改）</div>`:''}
     </div>
     ${ocrValidation ? `<div class="status-msg ${ocrValidation.sumMismatchCols.length ? 'error' : 'info'}" style="margin-bottom:12px;">${icon('search', 14)} 图片识别校验（引擎：${source.ocr?.engine === 'llm' ? '云端 LLM' : '本地 Tesseract'}${source.ocr?.meanConfidence != null ? `，整体置信度 ${source.ocr.meanConfidence}%，仅供参考` : ''}）${source.ocr?.notice ? `：${escapeHTML(source.ocr.notice)}` : ''}：${Object.keys(ocrValidation.issues).length ? `疑似误读 <strong>${Object.keys(ocrValidation.issues).length}</strong> 格（预览中标红，点击可按候选修正）` : '未见异常格'}${ocrValidation.sumMismatchCols.length ? `；<strong>第 ${ocrValidation.sumMismatchCols.map(c => c + 1).join('、')} 列</strong>的数据合计与图内合计行不符，请逐格核对！` : ''}</div>` : ''}
     <div style="font-size:14px;font-weight:600;margin-bottom:10px;">${icon('list', 14)} 列映射 — 请确认或修改</div>
@@ -164,7 +188,20 @@ export function confirmMapping(): void {
       Object.entries(src.analysis.autoMap.cols).forEach(([ci, col]) => { if (col.type) typeToCol[col.type] = Number(ci); });
     }
 
-    sourcesData.push({ dataRows, typeToCol, source: src });
+    // 姓名列清洗（全数据源通用）：剥离 王辉2/陈建新8月/王辉（补发）类注记——
+    // 原样导出会被目标平台拒收。生成新行数组，绝不原地改源数据；
+    // 用户手动编辑过的源（dataRowsOverride 存在）视为已人工校对，不再自动清洗
+    let outRows = dataRows;
+    if (typeToCol.name != null && !src.dataRowsOverride) {
+      const nameIdx = typeToCol.name;
+      outRows = dataRows.map(r => {
+        const c = [...r];
+        const raw = String(c[nameIdx] ?? '').trim();
+        c[nameIdx] = cleanNameCell(raw);
+        return c;
+      });
+    }
+    sourcesData.push({ dataRows: outRows, typeToCol, source: src });
   });
 
   if (!sourcesData.length) { alert('没有有效数据行'); return; }
@@ -173,21 +210,22 @@ export function confirmMapping(): void {
 }
 
 /**
- * 图片源单元格人工修正（预览中标红格的点击处理，设计 §6）：
- * prompt 预填高频误读候选（validate.ts 给出）或当前值，用户确认后才写入
+ * 单元格人工修正（预览格点击，全数据源开放，2026-10-15 从图片源泛化）：
+ * prompt 预填图片源误读候选（validate.ts）或当前值，用户确认后才写入
  * source.dataRowsOverride 覆盖层——绝不静默修改。写完重渲染（重校验，所见即生效）。
+ * 用户编辑过的源在 confirmMapping 不再被自动姓名清洗（视为已人工校对）。
  */
-export function ocrEditCell(el: HTMLElement): void {
+export function editCell(el: HTMLElement): void {
   const ms = state.mappingState;
-  if (!ms?.source?.ocr || !ms.ocrValidation || !ms.dataRows) return;
+  if (!ms?.source || !ms.dataRows) return;
   const dataRows = ms.dataRows as Rows;
   const ri = Number(el.dataset.ri);
   const ci = Number(el.dataset.ci);
   if (!Number.isInteger(ri) || !Number.isInteger(ci)) return;
   const current = String(dataRows[ri]?.[ci] ?? '');
-  const issue = ms.ocrValidation.issues[`${ri}:${ci}`];
+  const issue = ms.ocrValidation?.issues[`${ri}:${ci}`];
   const prefill = issue?.fix ?? current;
-  const input = prompt(`修正第 ${ri + 1} 行「${ms.mapping?.cols?.[String(ci)]?.header || `第 ${ci + 1} 列`}」${issue ? `（${issue.msg}）` : ''}：`, prefill);
+  const input = prompt(`修改第 ${ri + 1} 行「${ms.mapping?.cols?.[String(ci)]?.header || `第 ${ci + 1} 列`}」${issue ? `（${issue.msg}）` : ''}：`, prefill);
   if (input === null) return;
   const src = ms.source;
   if (!src.dataRowsOverride) src.dataRowsOverride = dataRows.map(r => [...r]);
@@ -210,6 +248,6 @@ export function initMappingDelegates(): void {
     setPreview: el => setPreview(el.dataset.id || ''),
     confirmMapping: () => confirmMapping(),
     resetAll: () => invokeResetAll(),
-    ocrEditCell: el => ocrEditCell(el),
+    editCell: el => editCell(el),
   });
 }

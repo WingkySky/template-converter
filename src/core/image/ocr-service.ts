@@ -8,6 +8,7 @@ import type { SourceItemData } from '../parser/source-item';
 import { analyzeSheet } from '../parser/excel';
 import { loadOcrSettings } from '../../io/ocr-settings';
 import type { OcrEngineChoice } from '../../io/ocr-settings';
+import { cleanOcrRows } from './clean';
 import { DEFAULT_PREPROCESS, effectiveScale, enhance } from './preprocess';
 import type { PreprocessParams } from './preprocess';
 import type { OcrEngineResult, OcrProgress, OcrProvider } from './types';
@@ -107,6 +108,8 @@ export async function recognizeCanvasRaw(
     const provider = await getProvider(id);
     try {
       const result = await provider.recognize(image, { onProgress: opts.onProgress });
+      // 出口统一清洗（引号伪影/边框竖线/全角数字/悬空标点/长数字内空格）——只作用于图片源
+      result.rows = cleanOcrRows(result.rows);
       if (id === 'local' && llmError) {
         result.notice = `云端识别失败，已自动回落本地引擎（云端原因：${llmError}）`;
       }

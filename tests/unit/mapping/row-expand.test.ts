@@ -83,6 +83,34 @@ describe('expandAmountSplitRows · 合计核对', () => {
   });
 });
 
+describe('expandAmountSplitRows · labelNote 开关（2026-10-15 用户要求产品默认关）', () => {
+  it('labelNote=false：不写来源标签、不追加虚拟备注列、行宽不变', () => {
+    const r: Rows = [
+      ['王辉', '110101199001010015', '100.00', '200.00', '300.00'],
+      ['吴佐生', '110101199001010015', '', '', ''],
+    ];
+    const res = expandAmountSplitRows(r, { amountCols: [2, 3], noteCol: null, labelOf, labelNote: false });
+    expect(res.noteCol).toBeNull();
+    expect(res.expandedRowCount).toBe(3);
+    expect(res.rows[0]).toEqual(['王辉', '110101199001010015', '100.00', '', '300.00']);
+    expect(res.rows[1]).toEqual(['王辉', '110101199001010015', '200.00', '', '300.00']);
+    expect(res.rows[2]).toEqual(['吴佐生', '110101199001010015', '', '', '']);
+  });
+
+  it('labelNote=false 且已有备注列：备注原样保留不追加', () => {
+    const r: Rows = [['王辉', '110101199001010015', '100.00', '200.00', '300.00', '加急']];
+    const res = expandAmountSplitRows(r, { ...opts, labelNote: false });
+    expect(res.rows[0][5]).toBe('加急');
+    expect(res.rows[1][5]).toBe('加急');
+  });
+
+  it('labelNote 缺省 = true（保持原行为，引擎层默认不变）', () => {
+    const r: Rows = [['王辉', '110101199001010015', '100.00', '200.00', '300.00', '']];
+    const res = expandAmountSplitRows(r, opts);
+    expect(res.rows[0][5]).toBe('第一笔');
+  });
+});
+
 describe('expandAmountSplitRows · 红线', () => {
   it('单金额列返回原数据引用（单金额列场景字节级不变）', () => {
     const r: Rows = [['王辉', '110101199001010015', '100.00']];

@@ -13,6 +13,13 @@ import { expandAmountSplitRows } from '../../core/mapping/row-expand';
 import { computeOcrValidation } from '../../core/image/validate';
 import { cleanNameCell } from '../../core/clean/names';
 import { updateAccumIndicator, invokeResetAll } from './upload';
+
+// 拆分行备注标注来源的开关（2026-10-15 用户要求默认关）：记忆到本浏览器
+const SPLIT_NOTE_KEY = 'tc-split-note-labels';
+
+function splitNoteLabelsOn(): boolean {
+  try { return localStorage.getItem(SPLIT_NOTE_KEY) === '1'; } catch { return false; }
+}
 import { showTemplateStep } from './template';
 
 export function showMappingStep(): void {
@@ -85,18 +92,22 @@ export function showMappingStep(): void {
   const totalColSel = totalColEntry ? Number(totalColEntry[0]) : null;
   let splitChipHTML = '';
   if (amountColsSel.length >= 2) {
+    const labelNote = splitNoteLabelsOn();
     const dry = expandAmountSplitRows(dataRows, {
       amountCols: amountColsSel,
       totalCol: totalColSel,
       noteCol: null,
       labelOf: ci => String(detected.headerRow?.[ci] || '').trim() || `第 ${ci + 1} 列`,
+      labelNote,
     });
     const mismatchTxt = totalColSel != null
       ? (dry.mismatches.length
           ? `；<strong>合计核对 ${dry.mismatches.length} 行不平</strong>（${dry.mismatches.slice(0, 3).map(m => `第 ${m.rowIndex + 1} 行 ${m.sum}≠${m.declared}`).join('、')}${dry.mismatches.length > 3 ? '…' : ''}）`
           : '；合计核对通过')
       : '';
-    splitChipHTML = `<div style="background:var(--blue-soft);border:1px solid var(--blue-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--blue);">${icon('list', 14)} 检测到 <strong>${amountColsSel.length}</strong> 列税前金额，确认后将展开为 <strong>${dry.expandedRowCount}</strong> 行发放记录（跳过空金额）${mismatchTxt}</div>`;
+    // 备注标注来源开关（默认关，记忆到本浏览器）
+    const noteToggle = `<label style="margin-left:10px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;"><input type="checkbox" data-action="splitNoteToggle" ${labelNote ? 'checked' : ''} style="accent-color:var(--accent);">备注标注来源</label>`;
+    splitChipHTML = `<div style="background:var(--blue-soft);border:1px solid var(--blue-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--blue);">${icon('list', 14)} 检测到 <strong>${amountColsSel.length}</strong> 列税前金额，确认后将展开为 <strong>${dry.expandedRowCount}</strong> 行发放记录（跳过空金额）${mismatchTxt}${noteToggle}</div>`;
   }
   // 图片源校验（设计 §6）：字段级格式/校验位 + 高频误读候选 + 列合计核对，渲染时现算
   const ocrValidation = source.ocr ? computeOcrValidation(source.rows, dataRows, autoMap.cols) : null;
@@ -282,14 +293,16 @@ export function confirmMapping(): void {
     // 导出管线的单金额列假设零改动
     if (amountCols.length >= 2) {
       const headerRow = (state.mappingState!.headerRow as Row | undefined) || [];
+      const labelNote = splitNoteLabelsOn();
       const res = expandAmountSplitRows(outRows, {
         amountCols,
         totalCol: amountTotalCol,
         noteCol: typeToCol['note'] != null ? typeToCol['note'] : null,
         labelOf: ci => String(headerRow[ci] || '').trim() || `第 ${ci + 1} 列`,
+        labelNote,
       });
       outRows = res.rows;
-      if (typeToCol['note'] == null && res.noteCol != null) typeToCol['note'] = res.noteCol;
+      if (labelNote && typeToCol['note'] == null && res.noteCol != null) typeToCol['note'] = res.noteCol;
       if (res.mismatches.length) {
         // 发钱场景零容错：核对不平不静默下发，弹窗明示、用户可返回修改
         const lines = res.mismatches.slice(0, 5)
@@ -344,6 +357,11 @@ export function initMappingDelegates(): void {
   delegateAction(container, 'change', {
     toggleSrc: el => toggleSrc(el.dataset.id || '', (el as HTMLInputElement).checked),
     onMapChange: el => onMapChange(el as HTMLSelectElement),
+    // 拆分行备注标注来源开关：写 localStorage 后重渲染（预警条勾选态跟随）
+    splitNoteToggle: el => {
+      try { localStorage.setItem(SPLIT_NOTE_KEY, (el as HTMLInputElement).checked ? '1' : '0'); } catch { /* 隐私模式忽略 */ }
+      showMappingStep();
+    },
   });
   delegateAction(container, 'click', {
     setPreview: el => setPreview(el.dataset.id || ''),

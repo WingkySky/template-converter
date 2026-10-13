@@ -12,10 +12,13 @@ export interface ExpandAmountSplitOptions {
   amountCols: number[];
   /** 合计金额列（仅核对，不参与拆行与导出） */
   totalCol?: number | null;
-  /** 既有备注列；无则行尾追加虚拟备注列 */
+  /** 既有备注列；labelNote 开启且无此列时行尾追加虚拟备注列 */
   noteCol?: number | null;
   /** 拆分列的来源标签（一般为列头文本，如「第一笔」） */
   labelOf?: (ci: number) => string;
+  /** 拆分行备注标注来源（默认 true=写「第一笔」等标签；2026-10-15 用户要求产品默认关，
+   *  UI 层经设置开关控制并传入）。关闭时不写标签、不追加虚拟备注列，既有备注原样保留 */
+  labelNote?: boolean;
 }
 
 export interface SplitMismatch {
@@ -51,11 +54,12 @@ export function expandAmountSplitRows(dataRows: Rows, opts: ExpandAmountSplitOpt
 
   const target = amountCols[0];
   const labelOf = opts.labelOf ?? ((ci: number) => `第 ${ci + 1} 列`);
+  const labelNote = opts.labelNote !== false;
 
-  // 虚拟备注列：源表无备注列时追加在行尾（所有行对齐补齐）
+  // 虚拟备注列：标注开启且源表无备注列时追加在行尾（所有行对齐补齐）
   const width = dataRows.reduce((w, r) => Math.max(w, r.length), 0);
-  const noteIdx = noteColIn ?? width;
-  const outWidth = noteColIn != null ? width : width + 1;
+  const noteIdx = noteColIn ?? (labelNote ? width : null);
+  const outWidth = noteColIn != null ? width : (labelNote ? width + 1 : width);
 
   const rows: Rows = [];
   const mismatches: SplitMismatch[] = [];
@@ -63,7 +67,7 @@ export function expandAmountSplitRows(dataRows: Rows, opts: ExpandAmountSplitOpt
   dataRows.forEach((row, ri) => {
     const cells: Row = [];
     for (let i = 0; i < outWidth; i++) cells.push(row?.[i] ?? '');
-    if (noteColIn == null) cells[noteIdx] = '';
+    if (noteColIn == null && noteIdx != null) cells[noteIdx] = '';
 
     // 合计核对：sum(全部拆分列数值) vs 合计列（拆分列不可解析按 0 计入）
     if (opts.totalCol != null) {
@@ -96,10 +100,12 @@ export function expandAmountSplitRows(dataRows: Rows, opts: ExpandAmountSplitOpt
       amountCols.forEach(other => {
         if (other !== target) newRow[other] = '';
       });
-      const label = labelOf(ci);
-      newRow[noteIdx] = [String(cells[noteIdx] ?? '').trim(), String(label ?? '').trim()]
-        .filter(Boolean)
-        .join('；');
+      if (labelNote && noteIdx != null) {
+        const label = labelOf(ci);
+        newRow[noteIdx] = [String(cells[noteIdx] ?? '').trim(), String(label ?? '').trim()]
+          .filter(Boolean)
+          .join('；');
+      }
       rows.push(newRow);
     });
   });

@@ -11,13 +11,15 @@ function renderPanel(settings: OcrSettings): void {
   if (!body) return;
   body.innerHTML = `
     <div class="ocrs-engine">
+      <label><input type="radio" name="ocr-engine" value="auto" data-action="ocrsEngineChange" ${settings.engine === 'auto' ? 'checked' : ''}>
+        <span><strong>自动（推荐）</strong>——已配置下方 API key 时用云端 LLM 识别（实测表格结构还原显著更好），云端失败自动回落本地并提示原因；未配置 key 时直接用本地</span></label>
       <label><input type="radio" name="ocr-engine" value="local" data-action="ocrsEngineChange" ${settings.engine === 'local' ? 'checked' : ''}>
-        <span><strong>本地识别（默认）</strong>——Tesseract.js 在浏览器内运行，身份证/卡号/金额不出本机；首次识别需联网下载模型（约数 MB），之后浏览器缓存承载复用</span></label>
+        <span><strong>仅本地</strong>——Tesseract.js 在浏览器内运行，身份证/卡号/金额不出本机；首次识别需联网下载模型（约数 MB），之后浏览器缓存承载复用</span></label>
       <label><input type="radio" name="ocr-engine" value="llm" data-action="ocrsEngineChange" ${settings.engine === 'llm' ? 'checked' : ''}>
-        <span><strong>云端识别（可选）</strong>——多模态 LLM 直接看图输出表格，准确率更高，需自备 API key</span></label>
+        <span><strong>仅云端</strong>——多模态 LLM 直接看图输出表格，准确率更高，需自备 API key；失败不回落，直接报错</span></label>
     </div>
-    <div id="ocrs-llm-fields" class="${settings.engine === 'llm' ? '' : 'hidden'}">
-      <div class="ocrs-warn">开启云端识别即表示：图片中的身份证号、银行卡号、金额等敏感数据将发送至你所填写的服务方。API key 仅保存在本浏览器，不会经手本工具的托管方。</div>
+    <div id="ocrs-llm-fields" class="${settings.engine === 'local' ? 'hidden' : ''}">
+      <div class="ocrs-warn">使用云端识别即表示：图片中的身份证号、银行卡号、金额等敏感数据将发送至你所填写的服务方。API key 仅保存在本浏览器，不会经手本工具的托管方。</div>
       <div class="ocrs-field">
         <label for="ocrs-base-url">接口地址（OpenAI 兼容，含 /v1）</label>
         <input type="text" id="ocrs-base-url" value="${escapeHTML(settings.llm.baseURL)}" placeholder="https://apihub.agnes-ai.com/v1">
@@ -55,8 +57,10 @@ export function initOcrSettingsPanel(): void {
         const engineInput = overlay.querySelector('input[name="ocr-engine"]:checked') as HTMLInputElement | null;
         const read = (id: string): string =>
           (document.getElementById(id) as HTMLInputElement | null)?.value.trim() ?? '';
+        const engine: OcrSettings['engine'] =
+          engineInput?.value === 'llm' || engineInput?.value === 'local' ? engineInput.value : 'auto';
         const settings: OcrSettings = {
-          engine: engineInput?.value === 'llm' ? 'llm' : 'local',
+          engine,
           llm: {
             baseURL: read('ocrs-base-url') || DEFAULT_OCR_SETTINGS.llm.baseURL,
             apiKey: read('ocrs-api-key'),
@@ -64,7 +68,7 @@ export function initOcrSettingsPanel(): void {
           },
         };
         if (settings.engine === 'llm' && !settings.llm.apiKey) {
-          alert('已选择云端识别，请填写 API key（或切回本地识别）');
+          alert('已选择仅云端识别，请填写 API key（或改用自动/仅本地）');
           return;
         }
         saveOcrSettings(settings);
@@ -74,7 +78,8 @@ export function initOcrSettingsPanel(): void {
     delegateAction(overlay, 'change', {
       ocrsEngineChange: () => {
         const checked = overlay.querySelector('input[name="ocr-engine"]:checked') as HTMLInputElement | null;
-        document.getElementById('ocrs-llm-fields')?.classList.toggle('hidden', checked?.value !== 'llm');
+        // 自动/仅云端都需要 LLM 配置区；仅本地才隐藏
+        document.getElementById('ocrs-llm-fields')?.classList.toggle('hidden', checked?.value === 'local');
       },
     });
     // 点击遮罩空白处关闭（点击弹层本身不关闭）

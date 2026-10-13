@@ -19,6 +19,8 @@ export interface OcrEngineResult {
   /** 词块置信度均值（0~100，1 位小数）；LLM 引擎为 null——格级问题完全靠校验层 */
   meanConfidence: number | null;
   engine: 'local' | 'llm';
+  /** 引擎编排提示（如 auto 模式云端失败回落本地的原因），随结果透传给校对横幅 */
+  notice?: string;
 }
 
 /** 识别进度回调载荷 */

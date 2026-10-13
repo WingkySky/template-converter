@@ -7,17 +7,29 @@ import { buildSourceItem } from '../parser/source-item';
 import type { SourceItemData } from '../parser/source-item';
 import { analyzeSheet } from '../parser/excel';
 import { loadOcrSettings } from '../../io/ocr-settings';
+import type { OcrEngineChoice } from '../../io/ocr-settings';
 import { DEFAULT_PREPROCESS, effectiveScale, enhance } from './preprocess';
 import type { PreprocessParams } from './preprocess';
-import type { OcrEngineResult, OcrProgress } from './types';
+import type { OcrEngineResult, OcrProgress, OcrProvider } from './types';
 
 export type OcrEngineId = 'local' | 'llm';
 
 export interface OcrRunOptions {
-  engine?: OcrEngineId;
+  engine?: OcrEngineChoice;
   onProgress?: (p: OcrProgress) => void;
   /** 前处理参数覆盖（扫描 PDF 渲染已含放大，传 scale:1 防止二次放大） */
   preprocess?: PreprocessParams;
+}
+
+/**
+ * 引擎编排顺序（纯函数，可单测）。2026-10-13 双引擎实测：云端 LLM 对表格截图的
+ * 结构还原显著优于本地 Tesseract（8 列完美分离 vs 列带粘连），故 auto 默认
+ * 「已配置 key → 云端优先、失败回落本地」；未配置或显式 local 时仅本地。
+ */
+export function pickEngineOrder(choice: OcrEngineChoice, hasLlmKey: boolean): OcrEngineId[] {
+  if (choice === 'local') return ['local'];
+  if (choice === 'llm') return ['llm'];
+  return hasLlmKey ? ['llm', 'local'] : ['local'];
 }
 
 /** 图片解码为 canvas；超大图先等比压到 maxDim（OCR 不需要摄影级分辨率，护栏内存） */
@@ -63,8 +75,8 @@ function preprocessCanvas(src: HTMLCanvasElement, params: PreprocessParams): HTM
   return canvas;
 }
 
-async function getProvider(engine: OcrEngineId): Promise<import('./types').OcrProvider> {
-  if (engine === 'llm') {
+async function getProvider(id: OcrEngineId): Promise<OcrProvider> {
+  if (id === 'llm') {
     const { createLlmProvider } = await import('./providers/llm-provider');
     return createLlmProvider(loadOcrSettings());
   }
@@ -74,25 +86,41 @@ async function getProvider(engine: OcrEngineId): Promise<import('./types').OcrPr
 
 /**
  * canvas → 引擎识别（导出给 pdf.ts 扫描降级复用：每页渲染成 canvas 后调用）。
+ * 按 pickEngineOrder 顺序尝试；auto 模式云端失败时回落本地并在结果中附回落原因。
  * 行数可能为 0（空白页），由调用方聚合后统一判断。
  */
 export async function recognizeCanvasRaw(
   src: HTMLCanvasElement,
   opts: OcrRunOptions = {},
 ): Promise<OcrEngineResult> {
-  const engine = opts.engine ?? loadOcrSettings().engine;
+  const settings = loadOcrSettings();
   const processed = preprocessCanvas(src, opts.preprocess ?? DEFAULT_PREPROCESS);
-  const provider = await getProvider(engine);
-  const result = await provider.recognize(
-    {
-      canvas: processed,
-      dataUrl: processed.toDataURL('image/png'),
-      width: processed.width,
-      height: processed.height,
-    },
-    { onProgress: opts.onProgress },
-  );
-  return result;
+  const image = {
+    canvas: processed,
+    dataUrl: processed.toDataURL('image/png'),
+    width: processed.width,
+    height: processed.height,
+  };
+  const order = pickEngineOrder(opts.engine ?? settings.engine, !!settings.llm.apiKey.trim());
+  let llmError: string | null = null;
+  for (const id of order) {
+    const provider = await getProvider(id);
+    try {
+      const result = await provider.recognize(image, { onProgress: opts.onProgress });
+      if (id === 'local' && llmError) {
+        result.notice = `云端识别失败，已自动回落本地引擎（云端原因：${llmError}）`;
+      }
+      return result;
+    } catch (err) {
+      if (id === 'llm' && order.includes('local')) {
+        // auto 模式：云端失败不算终局，记下原因回落本地
+        llmError = err instanceof Error ? err.message : String(err);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('未能完成识别（引擎编排顺序为空）');
 }
 
 /** 图片文件 → 单一数据源条目（upload.ts 图片分支入口，设计 §3 数据流） */
@@ -118,6 +146,6 @@ export async function importImageSource(
     rows: analysis.rows,
     analysis,
   });
-  item.ocr = { engine: result.engine, meanConfidence: result.meanConfidence };
+  item.ocr = { engine: result.engine, meanConfidence: result.meanConfidence, notice: result.notice };
   return item;
 }

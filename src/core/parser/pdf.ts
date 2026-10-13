@@ -27,6 +27,7 @@ async function ocrScannedPages(doc: PDFDocumentProxy, fileName: string): Promise
   const rows: Rows = [];
   const confidences: number[] = [];
   let engine: 'local' | 'llm' | null = null;
+  let lastNotice: string | undefined;
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const viewport = page.getViewport({ scale: 3 });
@@ -40,6 +41,7 @@ async function ocrScannedPages(doc: PDFDocumentProxy, fileName: string): Promise
     rows.push(...result.rows);
     if (result.meanConfidence != null) confidences.push(result.meanConfidence);
     engine = result.engine;
+    lastNotice = result.notice;
   }
   if (!rows.length) return null;
   const analysis = analyzeSheet(fileName, rows, '', '');
@@ -49,6 +51,7 @@ async function ocrScannedPages(doc: PDFDocumentProxy, fileName: string): Promise
     meanConfidence: confidences.length
       ? Math.round((confidences.reduce((s, c) => s + c, 0) / confidences.length) * 10) / 10
       : null,
+    notice: lastNotice,
   };
   return item;
 }

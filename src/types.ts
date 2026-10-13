@@ -59,6 +59,8 @@ export interface OcrSourceMeta {
   engine: 'local' | 'llm';
   /** 词块置信度均值（0~100）；LLM 引擎为 null */
   meanConfidence: number | null;
+  /** 引擎编排提示（如 auto 模式云端失败回落本地的原因），随校验横幅展示 */
+  notice?: string;
 }
 
 /** 数据源条目（state.sources 的元素） */

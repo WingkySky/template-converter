@@ -28,6 +28,7 @@ export const COL_TYPE_LABELS: Record<string, string> = {
   bankName:   '开户银行',
   bankCard:   '银行卡号',
   amount:     '税前金额',
+  amountTotal: '合计金额（仅核对，不导出）',
   gender:     '性别',
   location:   '开户地/税源地',
   note:       '备注',

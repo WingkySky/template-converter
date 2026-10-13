@@ -5,9 +5,10 @@ import { escapeHTML, byId, delegateAction } from '../dom';
 import { icon } from '../icons';
 import { state } from '../../state';
 import type { SourceDataEntry } from '../../state';
-import type { Rows } from '../../types';
+import type { Row, Rows } from '../../types';
 import { smartDetectTable } from '../../core/parser/table-detect';
 import { detectColumnMapping, applyInferredNameByData, COL_TYPE_LABELS } from '../../core/mapping/column-detect';
+import { expandAmountSplitRows } from '../../core/mapping/row-expand';
 import { computeOcrValidation } from '../../core/image/validate';
 import { cleanNameCell } from '../../core/clean/names';
 import { updateAccumIndicator, invokeResetAll } from './upload';
@@ -57,6 +58,23 @@ export function showMappingStep(): void {
   // 图片源的人工编辑覆盖优先（confirmMapping 同口径；直接改检测结果会被重检测丢弃）
   const dataRows = source.dataRowsOverride ?? detected.dataRows;
   const autoMap = detectColumnMapping(detected.headerRow, dataRows);
+  // 保留用户在列映射下拉中的手动标注（onMapChange 触发重渲染时不丢选择；
+  // 仅同一数据源时回填，切换预览源不串）。用户手动类型优先于自动检测。
+  if (state.mappingState?.source?.id === source.id && state.mappingState.mapping?.cols) {
+    const prevCols = state.mappingState.mapping.cols;
+    Object.entries(prevCols).forEach(([ci, col]) => {
+      if (!col.type) return;
+      const nci = Number(ci);
+      if (autoMap.cols[ci]) autoMap.cols[ci].type = col.type;
+      else {
+        autoMap.cols[ci] = {
+          header: String(detected.headerRow?.[nci] || '').trim() || `列${nci + 1}`,
+          type: col.type,
+          samples: [],
+        };
+      }
+    });
+  }
   // 图片源：表头非「姓名」（如「9月」月份标注）时按数据特征推断姓名列（opt-in，仅 source.ocr）
   if (source.ocr) applyInferredNameByData(detected.headerRow, dataRows, autoMap);
   // 姓名列清洗统计（与 confirmMapping 同口径：用户编辑过的源不自动清洗）
@@ -68,6 +86,28 @@ export function showMappingStep(): void {
       const raw = String(r?.[nameCi] ?? '').trim();
       if (raw && cleanNameCell(raw) !== raw) nameCleanCount++;
     });
+  }
+  // 多列税前金额拆分预警 + 合计核对（dry-run，与 confirmMapping 同一纯函数，确认前可见）
+  const amountColsSel = Object.entries(autoMap.cols)
+    .filter(([, col]) => col.type === 'amount')
+    .map(([ci]) => Number(ci))
+    .sort((a, b) => a - b);
+  const totalColEntry = Object.entries(autoMap.cols).find(([, col]) => col.type === 'amountTotal');
+  const totalColSel = totalColEntry ? Number(totalColEntry[0]) : null;
+  let splitChipHTML = '';
+  if (amountColsSel.length >= 2) {
+    const dry = expandAmountSplitRows(dataRows, {
+      amountCols: amountColsSel,
+      totalCol: totalColSel,
+      noteCol: null,
+      labelOf: ci => String(detected.headerRow?.[ci] || '').trim() || `第 ${ci + 1} 列`,
+    });
+    const mismatchTxt = totalColSel != null
+      ? (dry.mismatches.length
+          ? `；<strong>合计核对 ${dry.mismatches.length} 行不平</strong>（${dry.mismatches.slice(0, 3).map(m => `第 ${m.rowIndex + 1} 行 ${m.sum}≠${m.declared}`).join('、')}${dry.mismatches.length > 3 ? '…' : ''}）`
+          : '；合计核对通过')
+      : '';
+    splitChipHTML = `<div style="background:var(--blue-soft);border:1px solid var(--blue-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--blue);">${icon('list', 14)} 检测到 <strong>${amountColsSel.length}</strong> 列税前金额，确认后将展开为 <strong>${dry.expandedRowCount}</strong> 行发放记录（跳过空金额）${mismatchTxt}</div>`;
   }
   // 图片源校验（设计 §6）：字段级格式/校验位 + 高频误读候选 + 列合计核对，渲染时现算
   const ocrValidation = source.ocr ? computeOcrValidation(source.rows, dataRows, autoMap.cols) : null;
@@ -132,6 +172,7 @@ export function showMappingStep(): void {
       ${detected.headerRowIndex>0?`<div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('arrowLeft', 12)} 跳过前 ${detected.headerRowIndex} 行</div>`:''}
       ${detected.filteredCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('filter', 14)} 已自动过滤 <strong>${detected.filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
       ${nameCleanCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('eraser', 14)} 姓名列已清洗 <strong>${nameCleanCount}</strong> 处注记（预览格悬停可见原值，点击可修改）</div>`:''}
+      ${splitChipHTML}
     </div>
     ${ocrValidation ? `<div class="status-msg ${ocrValidation.sumMismatchCols.length ? 'error' : 'info'}" style="margin-bottom:12px;">${icon('search', 14)} 图片识别校验（引擎：${source.ocr?.engine === 'llm' ? '云端 LLM' : '本地 Tesseract'}${source.ocr?.meanConfidence != null ? `，整体置信度 ${source.ocr.meanConfidence}%，仅供参考` : ''}）${source.ocr?.notice ? `：${escapeHTML(source.ocr.notice)}` : ''}：${Object.keys(ocrValidation.issues).length ? `疑似误读 <strong>${Object.keys(ocrValidation.issues).length}</strong> 格（预览中标红，点击可按候选修正）` : '未见异常格'}${ocrValidation.sumMismatchCols.length ? `；<strong>第 ${ocrValidation.sumMismatchCols.map(c => c + 1).join('、')} 列</strong>的数据合计与图内合计行不符，请逐格核对！` : ''}</div>` : ''}
     <div style="font-size:14px;font-weight:600;margin-bottom:10px;">${icon('list', 14)} 列映射 — 请确认或修改</div>
@@ -168,25 +209,39 @@ export function onMapChange(sel: HTMLSelectElement): void {
   const ci = sel.dataset.col as string;
   if (state.mappingState) state.mappingState.mapping!.cols[ci].type = sel.value;
   sel.parentElement!.classList.toggle('selected', !!sel.value);
+  // 拆分预警/合计核对需跟随用户标注实时更新：重渲染映射页（尽力保留滚动位置；
+  // scrollTo 在测试桩环境缺失，可选调用兜底）
+  const y = typeof window !== 'undefined' && typeof window.scrollY === 'number' ? window.scrollY : 0;
+  showMappingStep();
+  try { window.scrollTo?.({ top: y }); } catch { /* 测试桩无 scrollTo */ }
 }
 
 export function confirmMapping(): void {
   // Collect data rows WITH per-source column mappings
   // This is critical for multi-sheet files where each sheet has different column layout
   const sourcesData: SourceDataEntry[] = [];
+  let splitMismatchSummary: string | null = null;
   state.sources.filter(s => s.selected).forEach(src => {
     // 图片源优先取人工编辑覆盖（与预览同口径）
     const dataRows = src.dataRowsOverride ?? smartDetectTable(src.rows).dataRows;
     if (dataRows.length === 0) return;
 
+    // 列类型收集：税前金额允许多列（多列标记不互相覆盖）；合计金额仅核对、不进导出面。
     // Use user-modified mapping for preview source, auto-detected for others
+    const cols = src.id === state.previewSourceId
+      ? state.mappingState!.mapping!.cols
+      : (src.analysis?.autoMap?.cols || {});
     let typeToCol: Record<string, number | null> = {};
-    if (src.id === state.previewSourceId) {
-      const cols = state.mappingState!.mapping!.cols;
-      Object.entries(cols).forEach(([ci, col]) => { if (col.type) typeToCol[col.type] = Number(ci); });
-    } else if (src.analysis?.autoMap?.cols) {
-      Object.entries(src.analysis.autoMap.cols).forEach(([ci, col]) => { if (col.type) typeToCol[col.type] = Number(ci); });
-    }
+    const amountCols: number[] = [];
+    let amountTotalCol: number | null = null;
+    Object.entries(cols).forEach(([ci, col]) => {
+      if (!col.type) return;
+      if (col.type === 'amount') { amountCols.push(Number(ci)); return; }
+      if (col.type === 'amountTotal') { amountTotalCol = Number(ci); return; }
+      typeToCol[col.type] = Number(ci);
+    });
+    amountCols.sort((a, b) => a - b);
+    if (amountCols.length) typeToCol['amount'] = amountCols[0];
 
     // 姓名列清洗（全数据源通用）：剥离 王辉2/陈建新8月/王辉（补发）类注记——
     // 原样导出会被目标平台拒收。生成新行数组，绝不原地改源数据；
@@ -201,10 +256,36 @@ export function confirmMapping(): void {
         return c;
       });
     }
+
+    // 多列税前金额 → 拆行（设计 docs/superpowers/specs/2026-10-15-amount-split-rows-design.md）：
+    // 金额归一写入最左拆分列（= typeToCol.amount），其余拆分列清空，备注写来源列头——
+    // 导出管线的单金额列假设零改动
+    if (amountCols.length >= 2) {
+      const headerRow = (state.mappingState!.headerRow as Row | undefined) || [];
+      const res = expandAmountSplitRows(outRows, {
+        amountCols,
+        totalCol: amountTotalCol,
+        noteCol: typeToCol['note'] != null ? typeToCol['note'] : null,
+        labelOf: ci => String(headerRow[ci] || '').trim() || `第 ${ci + 1} 列`,
+      });
+      outRows = res.rows;
+      if (typeToCol['note'] == null && res.noteCol != null) typeToCol['note'] = res.noteCol;
+      if (res.mismatches.length) {
+        // 发钱场景零容错：核对不平不静默下发，弹窗明示、用户可返回修改
+        const lines = res.mismatches.slice(0, 5)
+          .map(m => `第 ${m.rowIndex + 1} 行：拆分合计 ${m.sum} ≠ 合计 ${m.declared}`)
+          .join('\n');
+        splitMismatchSummary = `数据源「${src.fileName}${src.sheetName ? ' / ' + src.sheetName : ''}」有 ${res.mismatches.length} 行拆分金额之和与合计列不符：\n${lines}${res.mismatches.length > 5 ? '\n…' : ''}`;
+      }
+    }
+
     sourcesData.push({ dataRows: outRows, typeToCol, source: src });
   });
 
   if (!sourcesData.length) { alert('没有有效数据行'); return; }
+  if (splitMismatchSummary) {
+    if (!confirm(`${splitMismatchSummary}\n\n仍要继续导出吗？（取消可返回映射页修正后重新确认）`)) return;
+  }
   state.mappingState!.sourcesData = sourcesData;
   showTemplateStep();
 }

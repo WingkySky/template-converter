@@ -4,7 +4,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { state } from '../../../src/state';
 import {
   showMappingStep, toggleSrc, setPreview, onMapChange, confirmMapping, initMappingDelegates,
+  applyUserTypeOverrides,
 } from '../../../src/ui/steps/mapping';
+import { detectColumnMapping } from '../../../src/core/mapping/column-detect';
 import { stubDom, resetState } from './test-support';
 import type { StubDom } from './test-support';
 
@@ -60,6 +62,45 @@ describe('toggleSrc / setPreview', () => {
     setPreview('s2');
     expect(state.sources[1].selected).toBe(true);
     expect(state.previewSourceId).toBe('s2');
+  });
+});
+
+describe('applyUserTypeOverrides（2026-10-15 回归：重渲染冲掉手动标注）', () => {
+  const header = ['姓名', '第一笔', '第二笔', '合计'];
+  const rows = [
+    ['王辉', '100.00', '200.00', '300.00'],
+    ['吴佐生', '150.00', '250.00', '400.00'],
+  ];
+
+  it('用户标注覆盖自动检测结果（含改成其他类型）', () => {
+    const autoMap = detectColumnMapping(header, rows);
+    applyUserTypeOverrides(autoMap, { '2': 'amountTotal' }, header);
+    expect(autoMap.cols['2'].type).toBe('amountTotal');
+  });
+
+  it('手动清空为「不识别」（空串）必须保留，不得被自动结果冲回（本次回归核心）', () => {
+    const autoMap = detectColumnMapping(header, rows);
+    // 自动检测把「合计」标成了 amount（或任何类型），用户手动清空
+    autoMap.cols['3'].type = 'amount';
+    applyUserTypeOverrides(autoMap, { '3': '' }, header);
+    expect(autoMap.cols['3'].type).toBe('');
+  });
+
+  it('未标注列保持自动结果；标注自动未识别的新列时补建卡片', () => {
+    const autoMap = detectColumnMapping(header, rows);
+    applyUserTypeOverrides(autoMap, { '2': 'note' }, header);
+    expect(autoMap.cols['1'].type).not.toBe('note'); // 未标注列不动
+    // 现有 cols 键中删除 2 再标注，验证补建
+    delete autoMap.cols['2'];
+    applyUserTypeOverrides(autoMap, { '2': 'note' }, header);
+    expect(autoMap.cols['2']).toMatchObject({ type: 'note', header: '第二笔' });
+  });
+
+  it('userTypes 缺省时不动任何自动结果', () => {
+    const autoMap = detectColumnMapping(header, rows);
+    const before = JSON.stringify(autoMap);
+    applyUserTypeOverrides(autoMap, undefined, header);
+    expect(JSON.stringify(autoMap)).toBe(before);
   });
 });
 

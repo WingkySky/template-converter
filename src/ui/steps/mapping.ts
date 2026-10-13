@@ -8,6 +8,7 @@ import type { SourceDataEntry } from '../../state';
 import type { Row, Rows } from '../../types';
 import { smartDetectTable } from '../../core/parser/table-detect';
 import { detectColumnMapping, applyInferredNameByData, COL_TYPE_LABELS } from '../../core/mapping/column-detect';
+import type { ColumnMapping } from '../../core/mapping/column-detect';
 import { expandAmountSplitRows } from '../../core/mapping/row-expand';
 import { computeOcrValidation } from '../../core/image/validate';
 import { cleanNameCell } from '../../core/clean/names';
@@ -58,23 +59,11 @@ export function showMappingStep(): void {
   // 图片源的人工编辑覆盖优先（confirmMapping 同口径；直接改检测结果会被重检测丢弃）
   const dataRows = source.dataRowsOverride ?? detected.dataRows;
   const autoMap = detectColumnMapping(detected.headerRow, dataRows);
-  // 保留用户在列映射下拉中的手动标注（onMapChange 触发重渲染时不丢选择；
-  // 仅同一数据源时回填，切换预览源不串）。用户手动类型优先于自动检测。
-  if (state.mappingState?.source?.id === source.id && state.mappingState.mapping?.cols) {
-    const prevCols = state.mappingState.mapping.cols;
-    Object.entries(prevCols).forEach(([ci, col]) => {
-      if (!col.type) return;
-      const nci = Number(ci);
-      if (autoMap.cols[ci]) autoMap.cols[ci].type = col.type;
-      else {
-        autoMap.cols[ci] = {
-          header: String(detected.headerRow?.[nci] || '').trim() || `列${nci + 1}`,
-          type: col.type,
-          samples: [],
-        };
-      }
-    });
-  }
+  // 同源保留用户的手动标注（含「不识别」空串）——重渲染合并时用户选择一律优先于自动检测；
+  // 切换预览源不串。见 applyUserTypeOverrides（2026-10-15 用户反馈：手动清空被冲回自动结果）。
+  const sameSource = state.mappingState?.source?.id === source.id;
+  const userTypes = sameSource ? state.mappingState?.userTypes : undefined;
+  applyUserTypeOverrides(autoMap, userTypes, detected.headerRow as Row | undefined);
   // 图片源：表头非「姓名」（如「9月」月份标注）时按数据特征推断姓名列（opt-in，仅 source.ocr）
   if (source.ocr) applyInferredNameByData(detected.headerRow, dataRows, autoMap);
   // 姓名列清洗统计（与 confirmMapping 同口径：用户编辑过的源不自动清洗）
@@ -119,6 +108,7 @@ export function showMappingStep(): void {
     source,
     filteredCount: detected.filteredCount || 0,
     ocrValidation: ocrValidation ?? undefined,
+    userTypes: userTypes || {},
   };
 
   // Column mapping
@@ -207,13 +197,43 @@ export function setPreview(id: string): void {
 
 export function onMapChange(sel: HTMLSelectElement): void {
   const ci = sel.dataset.col as string;
-  if (state.mappingState) state.mappingState.mapping!.cols[ci].type = sel.value;
+  if (state.mappingState) {
+    state.mappingState.mapping!.cols[ci].type = sel.value;
+    // 用户显式标注（含「不识别」空串）单独记录：重渲染合并时用户选择优先，
+    // 否则重新自动检测会把「手动清空」冲回自动结果（2026-10-15 用户反馈回归）
+    state.mappingState.userTypes = { ...(state.mappingState.userTypes || {}), [ci]: sel.value };
+  }
   sel.parentElement!.classList.toggle('selected', !!sel.value);
   // 拆分预警/合计核对需跟随用户标注实时更新：重渲染映射页（尽力保留滚动位置；
   // scrollTo 在测试桩环境缺失，可选调用兜底）
   const y = typeof window !== 'undefined' && typeof window.scrollY === 'number' ? window.scrollY : 0;
   showMappingStep();
   try { window.scrollTo?.({ top: y }); } catch { /* 测试桩无 scrollTo */ }
+}
+
+/**
+ * 用户手动标注回填（重渲染合并，2026-10-15 回归修复）：
+ * 重渲染会重新自动检测；若只按 cols 的 type 回填，「手动清空为不识别（''）」与
+ * 「自动未识别」无法区分，用户的清空选择会被自动结果冲回（表现为下拉锁死）。
+ * 故用户标注单独记录于 userTypes（含空串），一律覆盖自动值；未标注列保持自动结果。
+ */
+export function applyUserTypeOverrides(
+  autoMap: ColumnMapping,
+  userTypes: Record<string, string> | undefined,
+  headerRow: Row | undefined,
+): void {
+  if (!userTypes) return;
+  Object.entries(userTypes).forEach(([ci, type]) => {
+    const nci = Number(ci);
+    if (autoMap.cols[ci]) autoMap.cols[ci].type = type;
+    else {
+      autoMap.cols[ci] = {
+        header: String(headerRow?.[nci] || '').trim() || `列${nci + 1}`,
+        type,
+        samples: [],
+      };
+    }
+  });
 }
 
 export function confirmMapping(): void {

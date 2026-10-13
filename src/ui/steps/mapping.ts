@@ -5,8 +5,10 @@ import { escapeHTML, byId, delegateAction } from '../dom';
 import { icon } from '../icons';
 import { state } from '../../state';
 import type { SourceDataEntry } from '../../state';
+import type { Rows } from '../../types';
 import { smartDetectTable } from '../../core/parser/table-detect';
 import { detectColumnMapping, COL_TYPE_LABELS } from '../../core/mapping/column-detect';
+import { computeOcrValidation } from '../../core/image/validate';
 import { updateAccumIndicator, invokeResetAll } from './upload';
 import { showTemplateStep } from './template';
 
@@ -50,9 +52,21 @@ export function showMappingStep(): void {
   const source = sel.find(s => s.id === state.previewSourceId) || sel[0];
   state.previewSourceId = source.id;
 
-  const { headerRow, headerRowIndex, dataRows, filteredCount } = smartDetectTable(source.rows);
-  const autoMap = detectColumnMapping(headerRow, dataRows);
-  state.mappingState = { headerRow, headerRowIndex, dataRows, mapping: autoMap, source, filteredCount: filteredCount || 0 };
+  const detected = smartDetectTable(source.rows);
+  // 图片源的人工编辑覆盖优先（confirmMapping 同口径；直接改检测结果会被重检测丢弃）
+  const dataRows = source.dataRowsOverride ?? detected.dataRows;
+  const autoMap = detectColumnMapping(detected.headerRow, dataRows);
+  // 图片源校验（设计 §6）：字段级格式/校验位 + 高频误读候选 + 列合计核对，渲染时现算
+  const ocrValidation = source.ocr ? computeOcrValidation(source.rows, dataRows, autoMap.cols) : null;
+  state.mappingState = {
+    headerRow: detected.headerRow,
+    headerRowIndex: detected.headerRowIndex,
+    dataRows,
+    mapping: autoMap,
+    source,
+    filteredCount: detected.filteredCount || 0,
+    ocrValidation: ocrValidation ?? undefined,
+  };
 
   // Column mapping
   const colIndices = Object.keys(autoMap.cols).map(Number).sort((a,b)=>a-b);
@@ -69,13 +83,18 @@ export function showMappingStep(): void {
     </div>`;
   });
 
-  // Preview
-  const pv = Math.min(dataRows.length, 5);
+  // Preview（图片源展示全部行——校对是识别流程的一环，只给 5 行没法校对；上限 50 防扫描 PDF 卡顿）
+  const pv = Math.min(dataRows.length, source.ocr ? 50 : 5);
   let pvBody = '';
   for (let ri = 0; ri < pv; ri++) {
     pvBody += '<tr>' + colIndices.map(ci => {
       const v = String((dataRows[ri]||[])[ci]||'');
-      return `<td>${v?escapeHTML(v):'<span style="color:var(--text2);opacity:0.4;">—</span>'}</td>`;
+      // 图片源：校验问题格标红可点击（一键候选预填 prompt，确认后才写入——绝不静默改）
+      const issue = ocrValidation?.issues[`${ri}:${ci}`];
+      const cls = issue ? ' class="ocr-issue"' : '';
+      const tip = issue ? ` title="${escapeHTML(issue.msg + (issue.fix ? `（点击可修正为 ${issue.fix}）` : '（点击可修正）'))}"` : '';
+      const act = source.ocr ? ` data-action="ocrEditCell" data-ri="${ri}" data-ci="${ci}"` : '';
+      return `<td${cls}${tip}${act}>${v?escapeHTML(v):'<span style="color:var(--text2);opacity:0.4;">—</span>'}</td>`;
     }).join('') + '</tr>';
   }
   if (dataRows.length > pv) pvBody += `<tr><td colspan="${colIndices.length}" style="text-align:center;color:var(--text2);font-size:12px;padding:8px;">… 还有 ${dataRows.length-pv} 行</td></tr>`;
@@ -85,13 +104,14 @@ export function showMappingStep(): void {
     <div style="display:flex;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
       <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('table', 14)} <strong style="color:var(--accent2);">${dataRows.length}</strong> 行有效数据</div>
       <div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('list', 14)} 识别 <strong style="color:var(--accent2);">${colIndices.length}</strong> 列</div>
-      ${headerRowIndex>0?`<div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('arrowLeft', 12)} 跳过前 ${headerRowIndex} 行</div>`:''}
-      ${filteredCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('filter', 14)} 已自动过滤 <strong>${filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
+      ${detected.headerRowIndex>0?`<div style="background:var(--surface2);padding:8px 14px;border-radius:8px;font-size:13px;">${icon('arrowLeft', 12)} 跳过前 ${detected.headerRowIndex} 行</div>`:''}
+      ${detected.filteredCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('filter', 14)} 已自动过滤 <strong>${detected.filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
     </div>
+    ${ocrValidation ? `<div class="status-msg ${ocrValidation.sumMismatchCols.length ? 'error' : 'info'}" style="margin-bottom:12px;">${icon('search', 14)} 图片识别校验（引擎：${source.ocr?.engine === 'llm' ? '云端 LLM' : '本地 Tesseract'}${source.ocr?.meanConfidence != null ? `，整体置信度 ${source.ocr.meanConfidence}%，仅供参考` : ''}）：${Object.keys(ocrValidation.issues).length ? `疑似误读 <strong>${Object.keys(ocrValidation.issues).length}</strong> 格（预览中标红，点击可按候选修正）` : '未见异常格'}${ocrValidation.sumMismatchCols.length ? `；<strong>第 ${ocrValidation.sumMismatchCols.map(c => c + 1).join('、')} 列</strong>的数据合计与图内合计行不符，请逐格核对！` : ''}</div>` : ''}
     <div style="font-size:14px;font-weight:600;margin-bottom:10px;">${icon('list', 14)} 列映射 — 请确认或修改</div>
     <div class="mapping-grid">${colsHTML}</div>
     <div style="margin-bottom:12px;">
-      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px;">${icon('table', 13)} 数据预览</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text2);margin-bottom:8px;">${icon('table', 13)} 数据预览${source.ocr ? '（图片源：标红格为疑似识别错误，点击可修正）' : ''}</div>
       <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px;">
         <table class="result-table" style="font-size:12px;">
           <thead><tr>${colIndices.map(ci=>`<th>${escapeHTML(autoMap.cols[ci].header)}</th>`).join('')}</tr></thead>
@@ -129,7 +149,8 @@ export function confirmMapping(): void {
   // This is critical for multi-sheet files where each sheet has different column layout
   const sourcesData: SourceDataEntry[] = [];
   state.sources.filter(s => s.selected).forEach(src => {
-    const { dataRows } = smartDetectTable(src.rows);
+    // 图片源优先取人工编辑覆盖（与预览同口径）
+    const dataRows = src.dataRowsOverride ?? smartDetectTable(src.rows).dataRows;
     if (dataRows.length === 0) return;
 
     // Use user-modified mapping for preview source, auto-detected for others
@@ -149,6 +170,30 @@ export function confirmMapping(): void {
   showTemplateStep();
 }
 
+/**
+ * 图片源单元格人工修正（预览中标红格的点击处理，设计 §6）：
+ * prompt 预填高频误读候选（validate.ts 给出）或当前值，用户确认后才写入
+ * source.dataRowsOverride 覆盖层——绝不静默修改。写完重渲染（重校验，所见即生效）。
+ */
+export function ocrEditCell(el: HTMLElement): void {
+  const ms = state.mappingState;
+  if (!ms?.source?.ocr || !ms.ocrValidation || !ms.dataRows) return;
+  const dataRows = ms.dataRows as Rows;
+  const ri = Number(el.dataset.ri);
+  const ci = Number(el.dataset.ci);
+  if (!Number.isInteger(ri) || !Number.isInteger(ci)) return;
+  const current = String(dataRows[ri]?.[ci] ?? '');
+  const issue = ms.ocrValidation.issues[`${ri}:${ci}`];
+  const prefill = issue?.fix ?? current;
+  const input = prompt(`修正第 ${ri + 1} 行「${ms.mapping?.cols?.[String(ci)]?.header || `第 ${ci + 1} 列`}」${issue ? `（${issue.msg}）` : ''}：`, prefill);
+  if (input === null) return;
+  const src = ms.source;
+  if (!src.dataRowsOverride) src.dataRowsOverride = dataRows.map(r => [...r]);
+  const row = src.dataRowsOverride[ri];
+  if (row) row[ci] = input.trim();
+  showMappingStep();
+}
+
 // 映射容器事件委托：原内联 onchange/onclick 全部改为 data-action 分发。
 // change：toggleSrc（数据源勾选框）、onMapChange（列类型下拉框）
 // click ：setPreview（预览按钮）、confirmMapping（确认映射）、resetAll（重置，
@@ -163,5 +208,6 @@ export function initMappingDelegates(): void {
     setPreview: el => setPreview(el.dataset.id || ''),
     confirmMapping: () => confirmMapping(),
     resetAll: () => invokeResetAll(),
+    ocrEditCell: el => ocrEditCell(el),
   });
 }

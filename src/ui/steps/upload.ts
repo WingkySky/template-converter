@@ -3,7 +3,7 @@
 // onclick="resetAll()" → data-action="resetAll" + initAccumIndicatorDelegate() 事件委托。
 import * as XLSX from 'xlsx';
 import { icon } from '../icons';
-import { byId, delegateAction } from '../dom';
+import { byId, delegateAction, escapeHTML } from '../dom';
 import { state } from '../../state';
 import { parseCSV, isGarbled } from '../../core/parser/parse-csv';
 import { buildSourceItem } from '../../core/parser/source-item';
@@ -34,6 +34,24 @@ export function initUploadArea(): void {
   uploadArea.addEventListener('drop', e => {
     e.preventDefault(); uploadArea.classList.remove('dragover');
     if (e.dataTransfer!.files.length) handleFiles(e.dataTransfer!.files);
+  });
+  // 剪贴板粘贴上传（设计 §4）：仅当剪贴板含图片文件时接管（微信截图 Ctrl+V 直达），
+  // 文本粘贴不受任何影响。document 级监听，随 initUploadArea 装配一次。
+  document.addEventListener('paste', e => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file' && item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          const named = new File([file], file.name || `剪贴板图片_${Date.now()}.png`, { type: file.type });
+          handleFiles([named]);
+          e.preventDefault();
+        }
+        break; // 只取第一张图片
+      }
+    }
   });
 }
 
@@ -94,6 +112,31 @@ export function processFile(file: File): void {
         console.error('PDF 解析失败', err);
         alert(`PDF 解析失败：${err instanceof Error ? err.message : String(err)}`);
         state.pendingFiles--;
+        hideOcrProgress();
+        if (state.pendingFiles <= 0) updateAccumIndicator();
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  } else if (IMAGE_EXTS.includes(ext)) {
+    // 图片分支（设计 §3）：识别可能耗时数秒~数十秒，进度提示 + 完成后进入同一条映射管线
+    const reader = new FileReader();
+    reader.onload = async e => {
+      try {
+        const data = (e.target as FileReader).result as ArrayBuffer;
+        // 按需加载 OCR 编排（与 pdf.js 同模式：仅图片分支触达；含 Tesseract/LLM 双引擎选择）
+        const { importImageSource } = await import('../../core/image/ocr-service');
+        const item = await importImageSource(
+          new Blob([data], { type: file.type || 'image/png' }),
+          file.name,
+          { onProgress: p => updateOcrProgress(file.name, p) },
+        );
+        state.sources.push(item);
+        onFileParsed();
+      } catch (err) {
+        console.error('图片识别失败', err);
+        alert(`图片识别失败：${err instanceof Error ? err.message : String(err)}`);
+        state.pendingFiles--;
+        hideOcrProgress();
         if (state.pendingFiles <= 0) updateAccumIndicator();
       }
     };
@@ -104,9 +147,25 @@ export function processFile(file: File): void {
   }
 }
 
+// 支持识别的图片扩展名（设计 §4；.gif 不支持——动图无 OCR 意义）
+const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
+
+// —— OCR 进度提示（识别耗时数秒~数十秒，给明确等待反馈；元素缺失时静默，兼容测试桩）——
+function updateOcrProgress(fileName: string, p: { percent: number; stage: string }): void {
+  const el = document.getElementById('ocr-progress');
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.innerHTML = `<div class="status-msg info">${icon('cloud', 14)} 正在识别 ${escapeHTML(fileName)}：${escapeHTML(p.stage)} ${p.percent}%</div>`;
+}
+
+function hideOcrProgress(): void {
+  document.getElementById('ocr-progress')?.classList.add('hidden');
+}
+
 export function onFileParsed(): void {
   state.pendingFiles--;
   if (state.pendingFiles <= 0) {
+    hideOcrProgress();
     updateAccumIndicator();
     showMappingStep();
     (byId('file-input') as HTMLInputElement).value = '';

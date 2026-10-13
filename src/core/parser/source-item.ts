@@ -1,6 +1,6 @@
 // 数据源条目构造 —— 自 src/legacy.js 逐字搬移（阶段 1 分区 A），仅补充类型注解。
 // 独立小模块：只依赖类型，不含解析逻辑，避免 excel.ts ↔ file-orchestrator 循环依赖。
-import type { Rows } from '../../types';
+import type { OcrSourceMeta, Rows } from '../../types';
 import type { SheetAnalysis } from './excel';
 
 /** 数据源条目（legacy 中 state.sources 的元素形状） */
@@ -12,6 +12,10 @@ export interface SourceItemData {
   rows: Rows;
   selected: boolean;
   analysis: SheetAnalysis | null;
+  /** 图片/扫描 PDF 源的识别元数据（ocr-service 写入） */
+  ocr?: OcrSourceMeta;
+  /** 图片源的人工编辑覆盖（mapping 预览/confirmMapping 统一优先取本字段） */
+  dataRowsOverride?: Rows;
 }
 
 export interface BuildSourceItemParams {

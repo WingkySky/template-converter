@@ -43,6 +43,8 @@ export interface AppState {
     source?: SourceItem;
     filteredCount?: number;
     sourcesData?: SourceDataEntry[];
+    /** 图片源的识别校验结果（showMappingStep 现算；编辑格时读取候选，见 ui/steps/mapping.ts） */
+    ocrValidation?: import('./core/image/validate').OcrValidation;
   };
   targetTemplate: string | null;
   selectedTemplates: string[];

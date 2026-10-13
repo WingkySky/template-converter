@@ -70,14 +70,16 @@
       上传样例文件
     </div>
     <div class="upload-area" id="upload-area">
-      <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.pdf" multiple>
+      <input type="file" id="file-input" accept=".csv,.xlsx,.xls,.pdf,.png,.jpg,.jpeg,.webp,.bmp" multiple>
       <div class="icon" data-icon="upload" data-size="34"></div>
-      <div class="title">点击或拖拽上传 CSV / Excel / PDF 文件</div>
+      <div class="title">点击或拖拽上传 CSV / Excel / PDF / 图片文件</div>
       <div class="desc">
         支持同时上传多个文件，系统会智能识别数据表<br>
-        <em>支持 CSV（UTF-8 / GBK）、Excel（.xlsx / .xls）与文字版 PDF（.pdf）格式</em>
+        <em>支持 CSV（UTF-8 / GBK）、Excel（.xlsx / .xls）、文字版 PDF（.pdf）与图片识别（.png / .jpg / .webp，支持微信截图 Ctrl+V 直接粘贴；扫描 PDF 自动转图片识别）</em>
       </div>
+      <button type="button" class="btn btn-secondary btn-sm" id="ocr-settings-btn" style="margin-top:10px;">图片识别设置</button>
     </div>
+    <div id="ocr-progress" class="hidden" style="margin-top:12px;"></div>
     <div id="accum-indicator" class="hidden" style="margin-top:12px;"></div>
   </div>
 
@@ -116,6 +118,20 @@
         <button class="btn btn-secondary btn-sm" data-action="kbcmClose">关闭</button>
       </div>
       <div class="modal-body" id="kb-config-panel-body"></div>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="ocr-settings-modal">
+    <div class="modal-box" role="dialog" aria-label="图片识别设置">
+      <div class="modal-head">
+        <span class="modal-title">图片识别设置</span>
+        <button class="btn btn-secondary btn-sm" data-action="ocrsClose">关闭</button>
+      </div>
+      <div class="modal-body" id="ocr-settings-body"></div>
+      <div class="modal-head" style="border-top:1px solid var(--border);border-bottom:none;">
+        <span></span>
+        <button class="btn btn-primary btn-sm" data-action="ocrsSave">保存</button>
+      </div>
     </div>
   </div>
 

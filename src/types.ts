@@ -54,6 +54,13 @@ export interface SheetAnalysis {
   filteredCount?: number;
 }
 
+/** 图片/扫描 PDF 源的识别元数据：不可变的引擎事实（校验问题渲染时现算，见 core/image/validate.ts） */
+export interface OcrSourceMeta {
+  engine: 'local' | 'llm';
+  /** 词块置信度均值（0~100）；LLM 引擎为 null */
+  meanConfidence: number | null;
+}
+
 /** 数据源条目（state.sources 的元素） */
 export interface SourceItem {
   id: string;
@@ -63,6 +70,11 @@ export interface SourceItem {
   rows: Rows;
   selected: boolean;
   analysis: SheetAnalysis | null;
+  /** 图片/扫描 PDF 源的识别元数据（ocr-service 写入） */
+  ocr?: OcrSourceMeta;
+  /** 图片源的人工编辑覆盖：mapping 预览与 confirmMapping 统一优先取本字段
+   * （直接改智能检测结果会被 confirmMapping 的重检测丢弃） */
+  dataRowsOverride?: Rows;
 }
 
 /** 知识库商社条目（shangSheMap 的值） */

@@ -6,6 +6,7 @@ import { byId } from './ui/dom';
 import { icon } from './ui/icons';
 import { initKbPanel } from './ui/steps/kb-panel';
 import { initKBConfigPanel } from './ui/steps/kb-config-panel';
+import { initOcrSettingsPanel } from './ui/ocr-settings-panel';
 import {
   setResetAllHandler, initUploadArea, initAccumIndicatorDelegate, handleFileInput,
 } from './ui/steps/upload';
@@ -41,6 +42,7 @@ syncThemeIcon();
 // ==================== 装配 ====================
 initKbPanel();
 initKBConfigPanel();
+initOcrSettingsPanel();
 initUploadArea();
 initAccumIndicatorDelegate();
 initMappingDelegates();

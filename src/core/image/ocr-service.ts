@@ -6,6 +6,7 @@
 import { buildSourceItem } from '../parser/source-item';
 import type { SourceItemData } from '../parser/source-item';
 import { analyzeSheet } from '../parser/excel';
+import { applyInferredNameByData } from '../mapping/column-detect';
 import { loadOcrSettings } from '../../io/ocr-settings';
 import type { OcrEngineChoice } from '../../io/ocr-settings';
 import { cleanOcrRows } from './clean';
@@ -142,6 +143,13 @@ export async function importImageSource(
   }
   // 与 PDF 导入同构：智能表头识别 + 自动列映射在 analyzeSheet 内完成
   const analysis = analyzeSheet(fileName, result.rows, '', '');
+  // 图片源：表头非「姓名」（如「9月」）时按数据特征补推断姓名列
+  // （多图场景非预览源在 confirmMapping 走 analysis.autoMap，必须在此补齐）
+  applyInferredNameByData(
+    analysis.rows[analysis.headerRowIndex] || [],
+    analysis.rows.slice(analysis.headerRowIndex + 1),
+    analysis.autoMap,
+  );
   const item = buildSourceItem({
     type: 'image',
     fileName,

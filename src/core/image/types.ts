@@ -23,11 +23,13 @@ export interface OcrEngineResult {
   notice?: string;
 }
 
-/** 识别进度回调载荷 */
+/** 识别进度回调载荷（percent < 0 表示不确定进度，如 LLM 流式接收） */
 export interface OcrProgress {
-  /** 0~100 */
+  /** 0~100；-1 = 不确定进度 */
   percent: number;
   stage: string;
+  /** 可选的实时细节（LLM 流式：最近输出片段预览），UI 原样展示 */
+  detail?: string;
 }
 
 /**

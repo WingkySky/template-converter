@@ -258,3 +258,19 @@ upload.ts 图片分支（动态 import） ────────────�
    （剩余 17 位身份证为真实缺位，正确保留报警）。
 2. **「图片识别设置」按钮位置**：从上传拖拽区内部移到「01 上传样例文件」卡片标题行右侧
    （该按钮是引擎选择 auto/本地/云端 + 云端 baseURL/key/model 的入口）。
+
+### 姓名列推断与流式进度（2026-10-14 第二轮用户反馈）
+
+1. **姓名列识别缺失**：样张首列表头写「9月」（内容是姓名），`detectColumnMapping` 靠表头
+   关键词认列必然落空。修复（双管齐下）：
+   - LLM prompt 增补第 3 条：表头不是常规列名（月份标注/缺失）时，有数据的列必须作为
+     独立一列逐行照抄，不得丢弃或合并；
+   - 新增 `applyInferredNameByData`（column-detect.ts，图片源 opt-in）：无 name 列时按
+     「≥60% 非空样本为 2~6 字纯中文且非费用标签，≥3 行」推断姓名列并写回 autoMap。
+     mapping.ts（预览）与 ocr-service.ts（多图非预览源）两处接线。**绝不触碰
+     CSV/Excel/PDF 基线**（compare 零变化已验证）。
+2. **云端识别无进度像死机**：LLM 请求改 `stream: true` 流式接收——`consumeContentStream`
+   逐块解析 SSE 的 delta.content 与 delta.reasoning_content（思考过程），节流 150ms 回调；
+   进度条实时显示「云端识别中（流式接收）· 最近输出片段预览」（percent=-1 不确定进度）。
+   服务端不支持流式时按普通 JSON 回落解析，行为不变。实测：进度条在识别期间持续更新
+   模型输出片段，死机感消除。

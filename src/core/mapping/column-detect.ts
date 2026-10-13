@@ -99,3 +99,50 @@ export function detectColumnMapping(headerRow: Row, dataRows: Rows): ColumnMappi
   });
   return { cols };
 }
+
+/**
+ * 按数据特征推断姓名列并写回 autoMap（图片源专用 opt-in——表头可能是「9月」这类
+ * 月份标注而非「姓名」，关键词匹配必然落空，2026-10-14 用户实测案例）。
+ * 只在图片源（source.ocr 存在）时调用，绝不触碰 CSV/Excel/PDF 基线行为（compare 红线）。
+ * 判据（保守）：该列 ≥60% 非空样本是 2~6 字纯中文（·分隔支持）且非费用/汇总标签，
+ * 至少 3 行；多列达标取占比最高（并列取最左）。已有 name 列时不做任何事。
+ * @returns 是否发生了写回
+ */
+export function applyInferredNameByData(headerRow: Row, dataRows: Rows, autoMap: ColumnMapping): boolean {
+  const alreadyNamed = Object.values(autoMap.cols).some(col => col.type === 'name');
+  if (alreadyNamed || autoMap.nameCol != null) return false;
+
+  const sampleN = Math.min(dataRows.length, 20);
+  if (sampleN < 3) return false;
+  const NAME_LIKE_RE = /^[\u4e00-\u9fff·]{2,6}$/;
+  // 内联费用/汇总标签前缀（不 import table-detect 的 FEE_LABEL_RE——它反过来依赖本模块，会成环）
+  const FEE_PREFIX_RE = /^(合计|总计|小计|累计|汇总|平台|服务费|手续费|费率|税率|金额|开票)/;
+  const width = Math.max(headerRow.length, ...dataRows.slice(0, sampleN).map(r => r.length));
+  let best = -1;
+  let bestShare = 0;
+  for (let ci = 0; ci < width; ci++) {
+    if (autoMap.cols[String(ci)]?.type) continue; // 已识别类型的列不参与推断
+    let nonEmpty = 0;
+    let nameLike = 0;
+    for (let ri = 0; ri < sampleN; ri++) {
+      const v = String(dataRows[ri]?.[ci] ?? '').trim();
+      if (!v) continue;
+      nonEmpty++;
+      if (NAME_LIKE_RE.test(v) && !FEE_PREFIX_RE.test(v)) nameLike++;
+    }
+    if (nonEmpty < 3) continue;
+    const share = nameLike / nonEmpty;
+    if (share >= 0.6 && share > bestShare) { bestShare = share; best = ci; }
+  }
+  if (best < 0) return false;
+
+  const samples: string[] = [];
+  for (let ri = 0; ri < Math.min(dataRows.length, 3); ri++) {
+    const sv = dataRows[ri]?.[best];
+    if (sv != null && String(sv).trim()) samples.push(String(sv).trim());
+  }
+  const header = String(headerRow?.[best] || '').trim() || `第 ${best + 1} 列`;
+  autoMap.cols[best] = { header, type: 'name', samples };
+  autoMap.nameCol = best;
+  return true;
+}

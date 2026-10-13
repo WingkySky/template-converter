@@ -151,11 +151,14 @@ export function processFile(file: File): void {
 const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
 
 // —— OCR 进度提示（识别耗时数秒~数十秒，给明确等待反馈；元素缺失时静默，兼容测试桩）——
-function updateOcrProgress(fileName: string, p: { percent: number; stage: string }): void {
+// percent < 0 表示不确定进度（LLM 流式接收），不显示百分比；detail 为实时输出预览
+function updateOcrProgress(fileName: string, p: { percent: number; stage: string; detail?: string }): void {
   const el = document.getElementById('ocr-progress');
   if (!el) return;
   el.classList.remove('hidden');
-  el.innerHTML = `<div class="status-msg info">${icon('cloud', 14)} 正在识别 ${escapeHTML(fileName)}：${escapeHTML(p.stage)} ${p.percent}%</div>`;
+  const pct = p.percent >= 0 ? ` ${p.percent}%` : '';
+  const detail = p.detail ? ` · ${escapeHTML(p.detail)}` : '';
+  el.innerHTML = `<div class="status-msg info">${icon('cloud', 14)} 正在识别 ${escapeHTML(fileName)}：${escapeHTML(p.stage)}${pct}${detail}</div>`;
 }
 
 function hideOcrProgress(): void {

@@ -7,7 +7,7 @@ import { state } from '../../state';
 import type { SourceDataEntry } from '../../state';
 import type { Rows } from '../../types';
 import { smartDetectTable } from '../../core/parser/table-detect';
-import { detectColumnMapping, COL_TYPE_LABELS } from '../../core/mapping/column-detect';
+import { detectColumnMapping, applyInferredNameByData, COL_TYPE_LABELS } from '../../core/mapping/column-detect';
 import { computeOcrValidation } from '../../core/image/validate';
 import { updateAccumIndicator, invokeResetAll } from './upload';
 import { showTemplateStep } from './template';
@@ -56,6 +56,8 @@ export function showMappingStep(): void {
   // 图片源的人工编辑覆盖优先（confirmMapping 同口径；直接改检测结果会被重检测丢弃）
   const dataRows = source.dataRowsOverride ?? detected.dataRows;
   const autoMap = detectColumnMapping(detected.headerRow, dataRows);
+  // 图片源：表头非「姓名」（如「9月」月份标注）时按数据特征推断姓名列（opt-in，仅 source.ocr）
+  if (source.ocr) applyInferredNameByData(detected.headerRow, dataRows, autoMap);
   // 图片源校验（设计 §6）：字段级格式/校验位 + 高频误读候选 + 列合计核对，渲染时现算
   const ocrValidation = source.ocr ? computeOcrValidation(source.rows, dataRows, autoMap.cols) : null;
   state.mappingState = {

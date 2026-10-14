@@ -1,5 +1,5 @@
 // mapping 单测：渲染 HTML 的 data-action 改造、勾选/预览切换、列类型修改、
-// confirmMapping 的 sourcesData 组装、#mapping-content 事件委托。
+// confirmMapping 的 sourcesData 组装、#mapping-content 事件委托、直接导出（识别导出）。
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { state } from '../../../src/state';
 import {
@@ -7,8 +7,23 @@ import {
   applyUserTypeOverrides,
 } from '../../../src/ui/steps/mapping';
 import { detectColumnMapping } from '../../../src/core/mapping/column-detect';
+import { getTodayStr } from '../../../src/core/export/naming';
+import { workbookToArray } from '../../../src/core/export/zip';
+import * as XLSX from 'xlsx';
+import { saveWorkbook } from '../../../src/io/save-file';
 import { stubDom, resetState } from './test-support';
 import type { StubDom } from './test-support';
+
+// 直接导出走 io/save-file 落盘：桩环境无 window，mock 掉以断言文件名与工作簿内容
+vi.mock('../../../src/io/save-file', () => ({
+  saveWorkbook: vi.fn(async () => true),
+}));
+
+/** 工作簿读回为二维行数组（与 builders.test.ts 的 readBack 同款：XLSX.read 后逐行取） */
+function sheetRows(wb: unknown): string[][] {
+  const read = XLSX.read(workbookToArray(wb as never), { type: 'array' });
+  return XLSX.utils.sheet_to_json(read.Sheets[read.SheetNames[0]], { header: 1, raw: false }) as string[][];
+}
 
 let dom: StubDom;
 beforeEach(() => { dom = stubDom(); resetState(); });
@@ -138,6 +153,79 @@ describe('confirmMapping', () => {
     confirmMapping();
     expect(dom.alertMock).toHaveBeenCalledWith('没有有效数据行');
     expect(dom.el('template-content').innerHTML).toBe('');
+  });
+});
+
+describe('直接导出（识别导出）', () => {
+  // 样例行须过 smartDetectTable 的非人员行过滤（强身份标识：16 位以上卡号）
+  const header = ['姓名', '备注', '账号', '金额'];
+  const rows = [
+    ['王辉2', '甲', '6222000011112222', '¥1,234.50'],
+    ['施丽华', '', '6222000033334444', '88.90'],
+  ];
+
+  beforeEach(() => { vi.mocked(saveWorkbook).mockClear(); });
+
+  function clickAction(action: string): void {
+    const clickHandlers = dom.el('mapping-content').listeners.get('click');
+    clickHandlers![0]({ target: { closest: () => ({ dataset: { action } }) } });
+  }
+
+  it('渲染两个导出按钮（data-action 进 btn-row）', () => {
+    pushSource('s1', [header, ...rows]);
+    showMappingStep();
+    const html = dom.el('mapping-content').innerHTML;
+    expect(html).toContain('data-action="exportDirectRaw"');
+    expect(html).toContain('data-action="exportDirectMapped"');
+    expect(html).toContain('导出原表');
+    expect(html).toContain('导出整理表');
+  });
+
+  it('exportDirectRaw：文件名 {源名去扩展}_识别原表_{日期}.xlsx，内容所见即所得（仅姓名清洗）', async () => {
+    pushSource('s1', [header, ...rows]);
+    showMappingStep();
+    initMappingDelegates();
+    clickAction('exportDirectRaw');
+    await vi.waitFor(() => expect(saveWorkbook).toHaveBeenCalledTimes(1));
+    const [wb, fileName] = vi.mocked(saveWorkbook).mock.calls[0];
+    expect(fileName).toBe(`s1_识别原表_${getTodayStr()}.xlsx`);
+    const sheet = sheetRows(wb);
+    expect(sheet[0]).toEqual(['姓名', '备注', '账号', '金额']);
+    // 原表：仅姓名注记清洗，其余逐格原样（¥ 符号/格式保留）
+    expect(sheet[1]).toEqual(['王辉', '甲', '6222000011112222', '¥1,234.50']);
+    expect(sheet[2]).toEqual(['施丽华', '', '6222000033334444', '88.90']);
+  });
+
+  it('exportDirectMapped：标准表头+值清洗（金额归一），姓名注记剥离', async () => {
+    pushSource('s1', [header, ...rows]);
+    showMappingStep();
+    initMappingDelegates();
+    clickAction('exportDirectMapped');
+    await vi.waitFor(() => expect(saveWorkbook).toHaveBeenCalledTimes(1));
+    const [wb, fileName] = vi.mocked(saveWorkbook).mock.calls[0];
+    expect(fileName).toBe(`s1_整理表_${getTodayStr()}.xlsx`);
+    const sheet = sheetRows(wb);
+    expect(sheet[0]).toEqual(['姓名', '备注', '银行卡号', '税前金额']);
+    expect(sheet[1]).toEqual(['王辉', '甲', '6222000011112222', '1234.5']);
+    expect(sheet[2]).toEqual(['施丽华', '', '6222000033334444', '88.9']);
+  });
+
+  it('mappingState 为空时 alert 拦截，不落盘', async () => {
+    pushSource('s1', [header, ...rows]);
+    initMappingDelegates();
+    clickAction('exportDirectRaw');
+    await Promise.resolve();
+    expect(dom.alertMock).toHaveBeenCalledWith('没有可导出的数据');
+    expect(saveWorkbook).not.toHaveBeenCalled();
+  });
+
+  it('整理表无任何已识别列时 alert 拦截，不落盘', async () => {
+    state.mappingState = { mapping: { cols: { '0': { type: '', header: '甲', samples: [] } } }, dataRows: [['x']] };
+    initMappingDelegates();
+    clickAction('exportDirectMapped');
+    await Promise.resolve();
+    expect(dom.alertMock).toHaveBeenCalledWith('没有已识别的列，请先在上方确认列映射');
+    expect(saveWorkbook).not.toHaveBeenCalled();
   });
 });
 

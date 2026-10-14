@@ -12,6 +12,10 @@ import type { ColumnMapping } from '../../core/mapping/column-detect';
 import { expandAmountSplitRows } from '../../core/mapping/row-expand';
 import { computeOcrValidation } from '../../core/image/validate';
 import { cleanNameCell } from '../../core/clean/names';
+import { buildRawDirectTable, buildMappedDirectTable } from '../../core/export/direct-export';
+import { buildGenericWorkbook } from '../../core/export/builders';
+import { getTodayStr } from '../../core/export/naming';
+import { saveWorkbook } from '../../io/save-file';
 import { updateAccumIndicator, invokeResetAll } from './upload';
 
 // 拆分行备注标注来源的开关（2026-10-15 用户要求默认关）：记忆到本浏览器
@@ -189,6 +193,8 @@ export function showMappingStep(): void {
     </div>
     <div class="btn-row">
       <button class="btn btn-primary" style="flex:1;padding:12px;font-size:15px;" data-action="confirmMapping">${icon('check', 14)} 确认映射</button>
+      <button class="btn btn-secondary" data-action="exportDirectRaw">${icon('download', 14)} 导出原表</button>
+      <button class="btn btn-secondary" data-action="exportDirectMapped">${icon('download', 14)} 导出整理表</button>
       <button class="btn btn-secondary" data-action="resetAll">${icon('refresh', 14)} 重置</button>
     </div>`;
 }
@@ -348,6 +354,41 @@ export function editCell(el: HTMLElement): void {
   showMappingStep();
 }
 
+// ==================== 直接导出（识别导出） ====================
+// 映射页短路径落盘（设计 docs/superpowers/specs/2026-10-14-mapping-direct-export-design.md）：
+// 仅当前预览源、仅 xlsx，与「确认映射→模版」管线并行零耦合。原表 = 预览所见即所得；
+// 整理表 = 按确认的列映射整理（标准表头+值清洗，多列金额不拆行）。
+// 姓名清洗与预览同口径：人工编辑过的源（dataRowsOverride 存在）视为已校对，不再自动清洗。
+
+/** 预览同口径的姓名列号：无人工编辑时返回 cols 中 name 类型的列号，否则 null（不清洗） */
+function directNameColIndex(cols: Record<string, { type?: string }>, edited: boolean): number | null {
+  if (edited) return null;
+  const entry = Object.entries(cols).find(([, col]) => col.type === 'name');
+  return entry ? Number(entry[0]) : null;
+}
+
+function directExportBaseName(): string {
+  const name = state.mappingState?.source?.fileName || '';
+  const base = name.replace(/\.[^.]+$/, '').trim();
+  return base || '识别结果';
+}
+
+async function exportDirect(kind: 'raw' | 'mapped'): Promise<void> {
+  const ms = state.mappingState;
+  const dataRows = (ms?.dataRows || []) as Rows;
+  const cols = ms?.mapping?.cols || {};
+  if (!dataRows.length || !Object.keys(cols).length) { alert('没有可导出的数据'); return; }
+  if (kind === 'mapped' && !Object.values(cols).some(col => col.type)) {
+    alert('没有已识别的列，请先在上方确认列映射'); return;
+  }
+  const nameCol = directNameColIndex(cols, !!ms?.source?.dataRowsOverride);
+  const table = kind === 'raw'
+    ? buildRawDirectTable(dataRows, cols, { nameColIndex: nameCol })
+    : buildMappedDirectTable(dataRows, cols, { nameColIndex: nameCol });
+  const wb = buildGenericWorkbook(table.headers, table.rows);
+  await saveWorkbook(wb, `${directExportBaseName()}_${kind === 'raw' ? '识别原表' : '整理表'}_${getTodayStr()}.xlsx`);
+}
+
 // 映射容器事件委托：原内联 onchange/onclick 全部改为 data-action 分发。
 // change：toggleSrc（数据源勾选框）、onMapChange（列类型下拉框）
 // click ：setPreview（预览按钮）、confirmMapping（确认映射）、resetAll（重置，
@@ -368,5 +409,7 @@ export function initMappingDelegates(): void {
     confirmMapping: () => confirmMapping(),
     resetAll: () => invokeResetAll(),
     editCell: el => editCell(el),
+    exportDirectRaw: () => exportDirect('raw'),
+    exportDirectMapped: () => exportDirect('mapped'),
   });
 }

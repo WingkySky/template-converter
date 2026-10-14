@@ -10,6 +10,7 @@ import { smartDetectTable } from '../../core/parser/table-detect';
 import { detectColumnMapping, applyInferredNameByData, COL_TYPE_LABELS } from '../../core/mapping/column-detect';
 import type { ColumnMapping } from '../../core/mapping/column-detect';
 import { expandAmountSplitRows } from '../../core/mapping/row-expand';
+import { mergeSamePersonRows } from '../../core/mapping/row-merge';
 import { computeOcrValidation } from '../../core/image/validate';
 import { cleanNameCell } from '../../core/clean/names';
 import { buildRawDirectTable, buildMappedDirectTable } from '../../core/export/direct-export';
@@ -23,6 +24,13 @@ const SPLIT_NOTE_KEY = 'tc-split-note-labels';
 
 function splitNoteLabelsOn(): boolean {
   try { return localStorage.getItem(SPLIT_NOTE_KEY) === '1'; } catch { return false; }
+}
+
+// 同人多条合并开关（2026-10-14 设计，默认关）：记忆到本浏览器
+const MERGE_DUP_KEY = 'tc-merge-duplicate-rows';
+
+function mergeDupRowsOn(): boolean {
+  try { return localStorage.getItem(MERGE_DUP_KEY) === '1'; } catch { return false; }
 }
 import { showTemplateStep } from './template';
 
@@ -94,14 +102,41 @@ export function showMappingStep(): void {
     .sort((a, b) => a - b);
   const totalColEntry = Object.entries(autoMap.cols).find(([, col]) => col.type === 'amountTotal');
   const totalColSel = totalColEntry ? Number(totalColEntry[0]) : null;
+  // 同人多条合并 dry-run（2026-10-14 设计，与 confirmMapping 同一纯函数，确认前可见）：
+  // 开启时把合并后行喂给拆行 dry-run（两条预警行数口径衔接）；关闭但检测到重复时淡提示引导
+  const mergeCols: Record<string, number | null> = {};
+  Object.entries(autoMap.cols).forEach(([ci, col]) => {
+    if (!col.type || col.type === 'amount' || col.type === 'amountTotal') return;
+    mergeCols[col.type] = Number(ci);
+  });
+  const labelOfCol = (ci: number) => String(detected.headerRow?.[ci] || '').trim() || `第 ${ci + 1} 列`;
+  const mergeOn = mergeDupRowsOn();
+  const mdry = mergeSamePersonRows(dataRows, { typeToCol: mergeCols, amountCols: amountColsSel, labelOf: labelOfCol, merge: mergeOn });
+  const effRows = mergeOn ? mdry.rows : dataRows;
+  const dupNamesTxt = (groups: { name: string; count: number }[]) =>
+    groups.slice(0, 3).map(g => `${g.name}×${g.count}`).join('、') + (groups.length > 3 ? '…' : '');
+  const mergeToggleHTML = `<label style="margin-left:10px;display:inline-flex;align-items:center;gap:4px;cursor:pointer;white-space:nowrap;"><input type="checkbox" data-action="mergeToggle" ${mergeOn ? 'checked' : ''} style="accent-color:var(--accent);">同人多条合并</label>`;
+  let mergeChipHTML = '';
+  if (mergeOn) {
+    const short = (v: string) => (v.length > 10 ? v.slice(0, 6) + '…' + v.slice(-4) : v);
+    const conflictTxt = mdry.conflicts.length
+      ? `；<span style="color:var(--orange);"><strong>${mdry.conflicts.length}</strong> 组要素不一致保持不合并（${mdry.conflicts.slice(0, 2).map(c => `${c.name} ${c.items.map(it => `${it.label} ${it.vals.map(short).join('/')}`).join('、')}`).join('；')}${mdry.conflicts.length > 2 ? '…' : ''}）</span>`
+      : '';
+    const noKeyTxt = mdry.noKeyCount > 0
+      ? `；<span style="color:var(--orange);">${mdry.noKeyCount} 行缺身份证且缺姓名/手机号，不参与合并</span>`
+      : '';
+    mergeChipHTML = `<div style="background:var(--blue-soft);border:1px solid var(--blue-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--blue);">${icon('users', 14)} 同人合并：${mdry.dupGroups.length ? `<strong>${mdry.dupGroups.length}</strong> 组重复（${dupNamesTxt(mdry.dupGroups)}），确认后 <strong>${dataRows.length} → ${mdry.rows.length}</strong> 行` : '未发现同人多条'}${conflictTxt}${noKeyTxt}${mergeToggleHTML}</div>`;
+  } else if (mdry.dupGroups.length) {
+    mergeChipHTML = `<div style="background:var(--surface2);border:1px solid var(--border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--text2);">${icon('users', 14)} 检测到 <strong>${mdry.dupGroups.length}</strong> 人有多条记录（${dupNamesTxt(mdry.dupGroups)}），勾选「同人多条合并」可在确认时合并发放${mergeToggleHTML}</div>`;
+  }
   let splitChipHTML = '';
   if (amountColsSel.length >= 2) {
     const labelNote = splitNoteLabelsOn();
-    const dry = expandAmountSplitRows(dataRows, {
+    const dry = expandAmountSplitRows(effRows, {
       amountCols: amountColsSel,
       totalCol: totalColSel,
       noteCol: null,
-      labelOf: ci => String(detected.headerRow?.[ci] || '').trim() || `第 ${ci + 1} 列`,
+      labelOf: labelOfCol,
       labelNote,
     });
     const mismatchTxt = totalColSel != null
@@ -178,6 +213,7 @@ export function showMappingStep(): void {
       ${detected.filteredCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('filter', 14)} 已自动过滤 <strong>${detected.filteredCount}</strong> 行非人员记录（如平台服务费、合计等费用/汇总行）</div>`:''}
       ${nameCleanCount>0?`<div style="background:var(--orange-soft);border:1px solid var(--orange-border);padding:8px 14px;border-radius:8px;font-size:13px;color:var(--orange);">${icon('eraser', 14)} 姓名列已清洗 <strong>${nameCleanCount}</strong> 处注记（预览格悬停可见原值，点击可修改）</div>`:''}
       ${splitChipHTML}
+      ${mergeChipHTML}
     </div>
     ${ocrValidation ? `<div class="status-msg ${ocrValidation.sumMismatchCols.length ? 'error' : 'info'}" style="margin-bottom:12px;">${icon('search', 14)} 图片识别校验（引擎：${source.ocr?.engine === 'llm' ? '云端 LLM' : '本地 PaddleOCR'}${source.ocr?.meanConfidence != null ? `，字符置信度 ${source.ocr.meanConfidence}%（仅衡量文字识别，不代表列位置/结构正确）` : ''}）${source.ocr?.notice ? `：${escapeHTML(source.ocr.notice)}` : ''}：${Object.keys(ocrValidation.issues).length ? `疑似误读 <strong>${Object.keys(ocrValidation.issues).length}</strong> 格（预览中标红，点击可按候选修正）` : '未见异常格'}${ocrValidation.sumMismatchCols.length ? `；<strong>第 ${ocrValidation.sumMismatchCols.map(c => c + 1).join('、')} 列</strong>的数据合计与图内合计行不符，请逐格核对！` : ''}</div>` : ''}
     <div style="font-size:14px;font-weight:600;margin-bottom:10px;">${icon('list', 14)} 列映射 — 请确认或修改</div>
@@ -258,6 +294,7 @@ export function confirmMapping(): void {
   // This is critical for multi-sheet files where each sheet has different column layout
   const sourcesData: SourceDataEntry[] = [];
   let splitMismatchSummary: string | null = null;
+  let mergeConflictSummary: string | null = null;
   state.sources.filter(s => s.selected).forEach(src => {
     // 图片源优先取人工编辑覆盖（与预览同口径）
     const dataRows = src.dataRowsOverride ?? smartDetectTable(src.rows).dataRows;
@@ -294,6 +331,27 @@ export function confirmMapping(): void {
       });
     }
 
+    // 同人多条合并（可选开关，默认关）：清洗后、拆行前——同人原始条目先归并
+    // （逐金额列求和），再交拆行按笔展开（docs/superpowers/specs/2026-10-14-row-merge-design.md）；
+    // 要素冲突组保持不合并，汇总后弹窗待人工确认，不静默带病下发
+    if (mergeDupRowsOn()) {
+      const headerRow = (state.mappingState!.headerRow as Row | undefined) || [];
+      const mres = mergeSamePersonRows(outRows, {
+        typeToCol,
+        amountCols,
+        labelOf: ci => String(headerRow[ci] || '').trim() || `第 ${ci + 1} 列`,
+        merge: true,
+      });
+      outRows = mres.rows;
+      if (mres.conflicts.length) {
+        const lines = mres.conflicts.slice(0, 5)
+          .map(c => `${c.name}：${c.items.map(it => `${it.label} ${it.vals.join(' / ')}`).join('；')}`)
+          .join('\n');
+        mergeConflictSummary = (mergeConflictSummary ? mergeConflictSummary + '\n\n' : '')
+          + `数据源「${src.fileName}${src.sheetName ? ' / ' + src.sheetName : ''}」有 ${mres.conflicts.length} 组同人记录要素不一致，已保持不合并：\n${lines}${mres.conflicts.length > 5 ? '\n…' : ''}`;
+      }
+    }
+
     // 多列税前金额 → 拆行（设计 docs/superpowers/specs/2026-10-15-amount-split-rows-design.md）：
     // 金额归一写入最左拆分列（= typeToCol.amount），其余拆分列清空，备注写来源列头——
     // 导出管线的单金额列假设零改动
@@ -324,6 +382,9 @@ export function confirmMapping(): void {
   if (!sourcesData.length) { alert('没有有效数据行'); return; }
   if (splitMismatchSummary) {
     if (!confirm(`${splitMismatchSummary}\n\n仍要继续导出吗？（取消可返回映射页修正后重新确认）`)) return;
+  }
+  if (mergeConflictSummary) {
+    if (!confirm(`${mergeConflictSummary}\n\n仍要继续导出吗？（取消可返回映射页修正后重新确认）`)) return;
   }
   state.mappingState!.sourcesData = sourcesData;
   showTemplateStep();
@@ -401,6 +462,11 @@ export function initMappingDelegates(): void {
     // 拆分行备注标注来源开关：写 localStorage 后重渲染（预警条勾选态跟随）
     splitNoteToggle: el => {
       try { localStorage.setItem(SPLIT_NOTE_KEY, (el as HTMLInputElement).checked ? '1' : '0'); } catch { /* 隐私模式忽略 */ }
+      showMappingStep();
+    },
+    // 同人多条合并开关：写 localStorage 后重渲染（预警条勾选态跟随）
+    mergeToggle: el => {
+      try { localStorage.setItem(MERGE_DUP_KEY, (el as HTMLInputElement).checked ? '1' : '0'); } catch { /* 隐私模式忽略 */ }
       showMappingStep();
     },
   });

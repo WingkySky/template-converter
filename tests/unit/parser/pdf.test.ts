@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { parsePdfSource } from '../../../src/core/parser/pdf';
+import type { OcrProgress } from '../../../src/core/image/types';
 
 const fixturePath = fileURLToPath(new URL('../../fixtures/服务结算明细-测试样例.pdf', import.meta.url));
 
@@ -62,5 +63,25 @@ describe('parsePdfSource（合成夹具，2 页 5 人，全部虚构数据）', 
     // 最小空白 PDF（无任何文本项，pdf.js 会自动重建 xref）
     const blank = new Uint8Array(Array.from('%PDF-1.4\n1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >> endobj\ntrailer << /Root 1 0 R /Size 4 >>\n%%EOF', ch => ch.charCodeAt(0)));
     await expect(parsePdfSource(blank.buffer, 'blank.pdf')).rejects.toThrow(/扫描件/);
+  });
+
+  it('onProgress 逐页上报：解析结构 + 提取文字 第 1/2、2/2 页，percent 单调不减', async () => {
+    const events: OcrProgress[] = [];
+    const buf = readFileSync(fixturePath);
+    const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
+    await parsePdfSource(ab, '服务结算明细-测试样例.pdf', p => events.push(p));
+    expect(events[0]).toMatchObject({ percent: -1, stage: '解析文档结构…' });
+    const stages = events.map(e => e.stage);
+    expect(stages).toContain('提取文字 第 1/2 页');
+    expect(stages).toContain('提取文字 第 2/2 页');
+    // percent 单调不减（-1 = 不确定进度，跳过比较）
+    let last = 0;
+    for (const e of events) {
+      if (e.percent < 0) continue;
+      expect(e.percent).toBeGreaterThanOrEqual(last);
+      last = e.percent;
+    }
+    // 第 2 页的基座 percent 为 50（(p-1)/N×100）
+    expect(events.find(e => e.stage === '提取文字 第 2/2 页')?.percent).toBe(50);
   });
 });

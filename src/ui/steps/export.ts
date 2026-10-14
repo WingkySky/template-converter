@@ -14,6 +14,7 @@
 //  - state.sbyShowBatchInfo/sbyPlainAmount 的直接赋值改 Object.assign（state.ts satisfies
 //    使布尔字段收窄为字面量类型，语义不变，与 controls.ts onSbyOptionChange 同款处理）。
 import { escapeHTML, byId, delegateAction } from '../dom';
+import { resetUploadTasks } from './upload';
 import { icon } from '../icons';
 import { state, DEFAULT_PREVIEW_ROW_LIMIT, type AppState, type OutputRowMeta } from '../../state';
 import type { Rows, Row } from '../../types';
@@ -721,5 +722,6 @@ export function resetAll() {
   });
   ['accum-indicator','step-mapping','step-template','step-export'].forEach(id =>
     byId(id).classList.add('hidden'));
+  resetUploadTasks();
   (byId('file-input') as HTMLInputElement).value = '';
 }

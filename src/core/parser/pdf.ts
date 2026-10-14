@@ -13,6 +13,7 @@ import { analyzeSheet } from './excel';
 import { pdfTextItemsToRows } from './pdf-text';
 import type { PdfTextItem } from './pdf-text';
 import { DEFAULT_PREPROCESS } from '../image/preprocess';
+import type { OcrProgress } from '../image/types';
 
 // 必须在首次 getDocument 之前注入（PDFWorker 初始化时读取一次）
 (globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = pdfjsWorker;
@@ -21,7 +22,13 @@ import { DEFAULT_PREPROCESS } from '../image/preprocess';
 // 逐页渲染成 canvas（渲染倍率 3 ≈ 216dpi，OCR 甜点区）→ 复用 OCR 编排
 // recognizeCanvasRaw（前处理 scale:1，防止二次放大）。Node 测试环境无 canvas →
 // 返回 null，上层保持原可读报错（tests/unit/parser/pdf.test.ts 的 /扫描件/ 断言依赖）。
-async function ocrScannedPages(doc: PDFDocumentProxy, fileName: string): Promise<SourceItemData | null> {
+// onProgress 上报口径（设计 §3）：页进度 ((p-1)/N)×100 为基座，OCR 内部进度线性
+// 叠加为 ((p-1)+内部/100)/N×100；内部为 -1（不确定）时整体保持 -1。
+async function ocrScannedPages(
+  doc: PDFDocumentProxy,
+  fileName: string,
+  onProgress?: (p: OcrProgress) => void,
+): Promise<SourceItemData | null> {
   if (typeof document === 'undefined') return null;
   const { recognizeCanvasRaw } = await import('../image/ocr-service');
   const rows: Rows = [];
@@ -29,6 +36,7 @@ async function ocrScannedPages(doc: PDFDocumentProxy, fileName: string): Promise
   let engine: 'local' | 'llm' | null = null;
   let lastNotice: string | undefined;
   for (let p = 1; p <= doc.numPages; p++) {
+    onProgress?.({ percent: Math.round(((p - 1) / doc.numPages) * 100), stage: `扫描件 第 ${p}/${doc.numPages} 页 · 渲染中` });
     const page = await doc.getPage(p);
     const viewport = page.getViewport({ scale: 3 });
     const canvas = document.createElement('canvas');
@@ -37,7 +45,17 @@ async function ocrScannedPages(doc: PDFDocumentProxy, fileName: string): Promise
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     await page.render({ canvasContext: ctx, viewport }).promise;
-    const result = await recognizeCanvasRaw(canvas, { preprocess: { ...DEFAULT_PREPROCESS, scale: 1 } });
+    const result = await recognizeCanvasRaw(canvas, {
+      preprocess: { ...DEFAULT_PREPROCESS, scale: 1 },
+      onProgress: inner => {
+        if (!onProgress) return;
+        onProgress({
+          percent: inner.percent >= 0 ? Math.round((((p - 1) + inner.percent / 100) / doc.numPages) * 100) : -1,
+          stage: `扫描件 第 ${p}/${doc.numPages} 页 · ${inner.stage}`,
+          detail: inner.detail,
+        });
+      },
+    });
     rows.push(...result.rows);
     if (result.meanConfidence != null) confidences.push(result.meanConfidence);
     engine = result.engine;
@@ -56,12 +74,18 @@ async function ocrScannedPages(doc: PDFDocumentProxy, fileName: string): Promise
   return item;
 }
 
-/** 从 PDF 提取数据源条目（整个文件视为一个数据表，跨页行顺序拼接） */
-export async function parsePdfSource(data: ArrayBuffer, fileName: string): Promise<SourceItemData[]> {
+/** 从 PDF 提取数据源条目（整个文件视为一个数据表，跨页行顺序拼接；onProgress 可选逐页上报） */
+export async function parsePdfSource(
+  data: ArrayBuffer,
+  fileName: string,
+  onProgress?: (p: OcrProgress) => void,
+): Promise<SourceItemData[]> {
+  onProgress?.({ percent: -1, stage: '解析文档结构…' });
   const doc = await pdfjsLib.getDocument({ data: new Uint8Array(data), isEvalSupported: false }).promise;
   try {
     const rows: Rows = [];
     for (let p = 1; p <= doc.numPages; p++) {
+      onProgress?.({ percent: Math.round(((p - 1) / doc.numPages) * 100), stage: `提取文字 第 ${p}/${doc.numPages} 页` });
       const page = await doc.getPage(p);
       const tc = await page.getTextContent();
       const items: PdfTextItem[] = [];
@@ -74,7 +98,7 @@ export async function parsePdfSource(data: ArrayBuffer, fileName: string): Promi
     if (!rows.length) {
       // 文字版提取为空 → 浏览器内降级「渲染成图 → OCR」；Node 测试环境或降级后
       // 仍无文字时，保持原可读报错口径（引导换 Excel/CSV）
-      const fallback = await ocrScannedPages(doc, fileName);
+      const fallback = await ocrScannedPages(doc, fileName, onProgress);
       if (!fallback) {
         throw new Error('未能从 PDF 提取到文字，可能是扫描件/图片型 PDF；请改用 Excel 或 CSV 文件');
       }

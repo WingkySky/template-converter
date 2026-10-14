@@ -41,11 +41,15 @@ describe('countSelectedRows', () => {
 });
 
 describe('handleFiles', () => {
-  it('不支持的扩展名：alert 告警且 pendingFiles 回落，累加计数保留', () => {
+  it('不支持的扩展名：行内失败（无 alert、无重试按钮），pendingFiles 回落，累加计数保留', () => {
     handleFiles([{ name: 'notes.txt' } as File]);
-    expect(dom.alertMock).toHaveBeenCalledWith('不支持的文件格式');
+    expect(dom.alertMock).not.toHaveBeenCalled();
     expect(state.pendingFiles).toBe(0);
     expect(state.accumFileCount).toBe(1);
+    const html = dom.el('upload-tasks').innerHTML;
+    expect(html).toContain('不支持的文件格式');
+    expect(html).toContain('notes.txt');
+    expect(html).not.toContain('data-action="retryTask"');
   });
 });
 

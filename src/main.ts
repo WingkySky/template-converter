@@ -8,7 +8,7 @@ import { initKbPanel } from './ui/steps/kb-panel';
 import { initKBConfigPanel } from './ui/steps/kb-config-panel';
 import { initOcrSettingsPanel } from './ui/ocr-settings-panel';
 import {
-  setResetAllHandler, initUploadArea, initAccumIndicatorDelegate, handleFileInput,
+  setResetAllHandler, initUploadArea, initUploadTasksDelegate, initAccumIndicatorDelegate, handleFileInput,
 } from './ui/steps/upload';
 import { initMappingDelegates } from './ui/steps/mapping';
 import { initTemplateDelegates, setGenerateOutputHandler } from './ui/steps/template';
@@ -44,6 +44,7 @@ initKbPanel();
 initKBConfigPanel();
 initOcrSettingsPanel();
 initUploadArea();
+initUploadTasksDelegate();
 initAccumIndicatorDelegate();
 initMappingDelegates();
 initTemplateDelegates();

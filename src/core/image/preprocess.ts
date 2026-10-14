@@ -24,7 +24,10 @@ export interface PreprocessParams {
 }
 
 export const DEFAULT_PREPROCESS: PreprocessParams = {
-  scale: 3,
+  // scale 1.5（2026-10-14 标定）：Paddle 检测模型内部自带 resize（短边统一 960），
+  // 原有 3x 是给 Tesseract 小字定的遗产——真实样张实测 1.5x 质量与 3x 持平
+  // （conf 0.996、全列正确）且 predict 8.8s vs 20s、画布内存峰值降 4 倍
+  scale: 1.5,
   maxShortSide: 3600,
   grayscale: true,
   contrast: 1.5,

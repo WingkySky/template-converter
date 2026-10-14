@@ -1,4 +1,4 @@
-// 本地 OCR 引擎（PaddleOCR 官方浏览器 SDK @0.4.2，PP-OCRv5 mobile，ONNX Runtime Web——
+// 本地 OCR 引擎（PaddleOCR 官方浏览器 SDK @0.4.2，PP-OCRv6_tiny，ONNX Runtime Web——
 // 浏览器内推理，数据不出网）。2026-10-14 替换 Tesseract.js：真实样张双引擎对照
 // Paddle 全表仅 1 字错 vs Tesseract 全表碎裂（详见 docs/superpowers/plans/2026-10-14-paddle-local-engine-plan.md）。
 //
@@ -32,6 +32,13 @@ const ORT_WASM_PATHS = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.3/dist
 // （卡号等）的间隙压到几何管线 0.75×字号分格阈值之下 → 两列粘进一格（2026-10-14
 // 真实样张实测：1.5/1.2 粘连、1.0 分离，置信度 99.7→99.6 基本无损）
 const PREDICT_PARAMS = { textDetUnclipRatio: 1.0 };
+// 模型选 PP-OCRv6_tiny（det 1MB + rec 4MB，bcebos 默认源）——对比 v5_mobile（21.5MB）：
+// 真实样张 conf 0.996 持平、predict 8.8s vs 20s、下载/堆内存砍 3/4（2026-10-14 标定）。
+// 注意：显式模型名须与 tar 内 inference.yml 的 model_name 一致；升级 SDK 时模型名可能变化
+const MODEL_OPTS = {
+  textDetectionModelName: 'PP-OCRv6_tiny_det',
+  textRecognitionModelName: 'PP-OCRv6_tiny_rec',
+};
 
 // —— SDK 输出/入参结构的最小投影（与官方类型解耦，防漂移；运行时形状见头部坑位 3：
 //    点是 [x, y] 数值数组，tuple 类型即可表达且接受 number[] 字面量之外的真实数据）——
@@ -140,8 +147,8 @@ function getPipeline(): Promise<PaddlePipelineLike> {
       trackedWorker = worker;
       return await mod.PaddleOCR.create({
         lang: 'ch',
-        ocrVersion: 'PP-OCRv5',
         worker: { createWorker: () => worker },
+        ...MODEL_OPTS,
         // 默认 wasm 后端：spike 实测不慢于 webgpu 首跑，且下载量少 13MB；webgpu 留作后续实验
         ortOptions: { backend: 'wasm', wasmPaths: ORT_WASM_PATHS },
       });
@@ -191,9 +198,24 @@ function isOomError(err: unknown): boolean {
   return /bad_alloc|out of memory|OOM|OrtRun/i.test(err instanceof Error ? err.message : String(err));
 }
 
-/** 表格竖线检测（内容 y 范围取词块覆盖范围）；任何异常都回落 undefined（推断归带路径） */
-function detectBordersSafe(canvas: HTMLCanvasElement, words: OcrWord[]): number[] | undefined {
+/**
+ * 表格竖线检测：优先用增强前的原始像素（image.rawImageData，与 canvas 同坐标系）——
+ * 对比度拉伸会把浅灰格线洗出暗像素阈值（原始检出 8 条边框线、增强后仅剩 3 条，实测）。
+ * OOM 降级后 canvas 与 raw 尺寸不一致，按宽度比例换算边界坐标。任何异常回落
+ * undefined（推断归带路径）。raw 缺失时退而在增强画布上检测（保底）。
+ */
+function detectBordersSafe(image: OcrImageInput, words: OcrWord[]): number[] | undefined {
   try {
+    const canvas = image.canvas;
+    if (!canvas || !words.length) return undefined;
+    const raw = image.rawImageData;
+    if (raw) {
+      const factor = raw.width / canvas.width;
+      const yMin = Math.min(...words.map(w => w.y)) * factor - 4;
+      const yMax = Math.max(...words.map(w => w.y + w.h)) * factor + 4;
+      const borders = detectColumnBorders(raw, yMin, yMax);
+      return borders.map(b => Math.round(b / factor));
+    }
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return undefined;
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -243,14 +265,17 @@ export const paddleProvider: OcrProvider = {
       }
       const words = paddleResultToWords(result?.items);
       if (!words.length) return { rows: [], meanConfidence: null, engine: 'local' };
-      // 表格竖线检测（画布坐标与词块一致——含 OOM 降级后的实际推理画布）；失败回落推断归带
-      const borders = detectBordersSafe(activeCanvas, words);
+      // 表格竖线检测（用增强前原始像素，坐标含 OOM 降级换算）；失败回落推断归带
+      const borders = detectBordersSafe(image, words);
       const { rows, meanConfidence } = ocrWordsToRows(words, activeCanvas.height, borders);
       return { rows, meanConfidence, engine: 'local' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/net::|failed to fetch|networkerror|load|404|timed?\s*out/i.test(msg)) {
-        throw new Error(`本地 OCR 引擎资源加载失败（首次使用需联网下载识别组件与模型约 45MB，之后浏览器缓存承载复用）：${msg}`);
+        throw new Error(`本地 OCR 引擎资源加载失败（首次使用需联网下载识别组件与模型约 30MB，之后浏览器缓存承载复用）：${msg}`);
+      }
+      if (isOomError(err)) {
+        throw new Error(`本地引擎内存不足（已自动尝试重建引擎与降分辨率仍失败）：${msg}；建议：①缩小图片尺寸后重试 ②在「识别设置」改用云端识别`);
       }
       throw err;
     } finally {

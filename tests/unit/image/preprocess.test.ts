@@ -8,7 +8,7 @@ function img(rgba: number[]) {
 
 describe('effectiveScale', () => {
   it('小图按目标倍数放大', () => {
-    expect(effectiveScale(87, DEFAULT_PREPROCESS)).toBe(3);
+    expect(effectiveScale(87, DEFAULT_PREPROCESS)).toBe(1.5);
   });
 
   it('大图受 maxShortSide 约束，图已够大则不放大（绝不缩小）', () => {

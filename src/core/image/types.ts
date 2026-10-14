@@ -1,6 +1,7 @@
 // 图片识别领域类型。core/image 不依赖 DOM——DOM 侧（图片加载、canvas 绘制、PDF 页面
 // 渲染）一律由调用方（ocr-service / upload / pdf.ts 的浏览器分支）完成，本层只收纯数据。
 import type { Rows } from '../../types';
+import type { GrayImage } from './preprocess';
 
 /** OCR 引擎产出的词块：文本 + 包围盒 + 置信度（图片坐标，y 向下，x/y 为包围盒左上角） */
 export interface OcrWord {
@@ -35,12 +36,16 @@ export interface OcrProgress {
 /**
  * 识别入参：同一张图同时给出 canvas（本地引擎直接吃 canvas）与 dataURL（LLM 引擎走
  * base64），由 ocr-service 统一准备，Provider 各取所需。Node/测试环境 canvas 为 null。
+ * rawImageData 为增强前的原始像素（与 canvas 同尺寸同坐标系）——表格竖线检测必须用它：
+ * 对比度拉伸会把浅灰格线洗到暗像素阈值之外（2026-10-14 实测：原始画布检出 8 条边框线，
+ * 增强后仅剩 3 条），见 grid-cols.ts。
  */
 export interface OcrImageInput {
   canvas: HTMLCanvasElement | null;
   dataUrl: string;
   width: number;
   height: number;
+  rawImageData?: GrayImage;
 }
 
 export interface OcrRecognizeOptions {

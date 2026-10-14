@@ -9,12 +9,16 @@ import type { OcrSettings } from '../io/ocr-settings';
 function renderPanel(settings: OcrSettings): void {
   const body = document.getElementById('ocr-settings-body');
   if (!body) return;
+  // 弱机探测：deviceMemory 仅 Chromium 系支持（undefined 视为未知不提示）
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  const lowEnd = (nav.deviceMemory !== undefined && nav.deviceMemory <= 4)
+    || (navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 4);
   body.innerHTML = `
     <div class="ocrs-engine">
       <label><input type="radio" name="ocr-engine" value="auto" data-action="ocrsEngineChange" ${settings.engine === 'auto' ? 'checked' : ''}>
         <span><strong>自动（推荐）</strong>——已配置下方 API key 时用云端 LLM 识别（实测表格结构还原显著更好），云端失败自动回落本地并提示原因；未配置 key 时直接用本地</span></label>
       <label><input type="radio" name="ocr-engine" value="local" data-action="ocrsEngineChange" ${settings.engine === 'local' ? 'checked' : ''}>
-        <span><strong>仅本地</strong>——PaddleOCR（PP-OCRv5）在浏览器内运行，身份证/卡号/金额不出本机；首次识别需联网下载组件与模型（约 45MB），之后浏览器缓存承载复用</span></label>
+        <span><strong>仅本地</strong>——PaddleOCR（PP-OCRv6_tiny）在浏览器内运行，身份证/卡号/金额不出本机；首次识别需联网下载组件与模型（约 30MB），之后浏览器缓存承载复用${lowEnd ? '；<strong>检测到本机配置较低，建议优先用云端识别</strong>' : ''}</span></label>
       <label><input type="radio" name="ocr-engine" value="llm" data-action="ocrsEngineChange" ${settings.engine === 'llm' ? 'checked' : ''}>
         <span><strong>仅云端</strong>——多模态 LLM 直接看图输出表格，准确率更高，需自备 API key；失败不回落，直接报错</span></label>
     </div>
@@ -23,6 +27,7 @@ function renderPanel(settings: OcrSettings): void {
       <div class="ocrs-field">
         <label for="ocrs-base-url">接口地址（OpenAI 兼容，含 /v1）</label>
         <input type="text" id="ocrs-base-url" value="${escapeHTML(settings.llm.baseURL)}" placeholder="https://apihub.agnes-ai.com/v1">
+        <div style="font-size:12px;color:var(--text2);margin-top:4px;">示例：Agnes（免费，注册即得 key）apihub.agnes-ai.com/v1 · 本机 Ollama（需已安装，数据不出本机）http://localhost:11434/v1，模型填 glm-ocr / qwen3-vl:4b</div>
       </div>
       <div class="ocrs-field">
         <label for="ocrs-api-key">API Key</label>

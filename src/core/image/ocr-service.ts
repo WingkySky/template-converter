@@ -11,7 +11,7 @@ import { loadOcrSettings } from '../../io/ocr-settings';
 import type { OcrEngineChoice } from '../../io/ocr-settings';
 import { cleanOcrRows } from './clean';
 import { DEFAULT_PREPROCESS, effectiveScale, enhance } from './preprocess';
-import type { PreprocessParams } from './preprocess';
+import type { PreprocessParams, GrayImage } from './preprocess';
 import type { OcrEngineResult, OcrProgress, OcrProvider } from './types';
 
 export type OcrEngineId = 'local' | 'llm';
@@ -57,8 +57,10 @@ async function blobToCanvas(blob: Blob, maxDim = 4000): Promise<HTMLCanvasElemen
   }
 }
 
-/** 前处理：短边放大（默认 ≥3 倍，实测 10px 数字即误读）→ 灰度 → 对比度拉伸（±可选二值化） */
-function preprocessCanvas(src: HTMLCanvasElement, params: PreprocessParams): HTMLCanvasElement {
+/** 前处理：短边放大（标定 1.5 倍，见 DEFAULT_PREPROCESS）→ 灰度 → 对比度拉伸（±可选二值化）。
+ *  返回增强画布 + 增强前的原始像素（raw：表格竖线检测必须用原始像素——对比度拉伸会把
+ *  浅灰格线洗出暗像素阈值，实测原始画布检出 8 条边框线、增强后仅剩 3 条） */
+function preprocessCanvas(src: HTMLCanvasElement, params: PreprocessParams): { canvas: HTMLCanvasElement; raw: GrayImage } {
   const scale = effectiveScale(Math.min(src.width, src.height), params);
   const w = Math.max(1, Math.round(src.width * scale));
   const h = Math.max(1, Math.round(src.height * scale));
@@ -70,11 +72,11 @@ function preprocessCanvas(src: HTMLCanvasElement, params: PreprocessParams): HTM
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(src, 0, 0, w, h);
-  const imageData = ctx.getImageData(0, 0, w, h);
-  const enhanced = enhance(imageData, params);
+  const raw = ctx.getImageData(0, 0, w, h);
+  const enhanced = enhance(raw, params);
   // enhance 返回的 data 底层必为新建的普通 ArrayBuffer（见 preprocess.ts），泛型收窄仅为类型层面
   ctx.putImageData(new ImageData(enhanced.data as Uint8ClampedArray<ArrayBuffer>, w, h), 0, 0);
-  return canvas;
+  return { canvas, raw: { width: w, height: h, data: raw.data } };
 }
 
 async function getProvider(id: OcrEngineId): Promise<OcrProvider> {
@@ -96,7 +98,7 @@ export async function recognizeCanvasRaw(
   opts: OcrRunOptions = {},
 ): Promise<OcrEngineResult> {
   const settings = loadOcrSettings();
-  const processed = preprocessCanvas(src, opts.preprocess ?? DEFAULT_PREPROCESS);
+  const { canvas: processed, raw } = preprocessCanvas(src, opts.preprocess ?? DEFAULT_PREPROCESS);
   // dataUrl 仅云端引擎需要（base64 大图，本地路径生成即浪费内存/CPU——OOM 敏感场景）
   const order = pickEngineOrder(opts.engine ?? settings.engine, !!settings.llm.apiKey.trim());
   const image = {
@@ -104,6 +106,7 @@ export async function recognizeCanvasRaw(
     dataUrl: order.includes('llm') ? processed.toDataURL('image/png') : '',
     width: processed.width,
     height: processed.height,
+    rawImageData: raw,
   };
   let llmError: string | null = null;
   for (const id of order) {

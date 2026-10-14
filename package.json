@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "preview:single": "vite preview --mode single",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "compare": "tsx tests/tools/compare.mjs",

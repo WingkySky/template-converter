@@ -21,6 +21,11 @@
 5. **环境备注（非产品问题）**：ZCode IAB 对源有逐源网络授权怪癖（8931 端口源已授权可拉
    bcebos，新源 5199/localhost 秒拒 `Failed to fetch`）——dev 冒烟须用 127.0.0.1:8931 起
    vite。挂网形态（github.io）与 bcebos CORS 反射无关此怪癖。
+6. **file:// 单文件模式本地识别不可用，已给明确指引**：file:// 下浏览器禁 Blob worker
+   （在 worker 创建步即抛 SecurityError，先于模型下载）——provider 识别 `location.protocol
+   === 'file:'` 直接报「请用 `npx vite preview --mode single` 或挂网/云端」，避免误读为
+   模型下载失败。`vite preview` 默认伺服 dist/（普通构建，可能为旧版本）——测单文件产物
+   用 `npm run preview:single`（= `vite preview --mode single`，伺服 dist-single/）。
 
 ## Spike 验证结论（2026-10-14 实测，scratch 页 + IAB/Edge，不涉主线代码）
 

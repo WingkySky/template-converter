@@ -172,6 +172,11 @@ export const paddleProvider: OcrProvider = {
     if (!image.canvas) {
       throw new Error('本地 OCR 引擎仅支持浏览器环境（需要 canvas）');
     }
+    // file:// 下浏览器禁 Blob worker（含本地单文件模式）——提前给出准确指引，
+    // 而非落到「资源加载失败」网络文案误导用户以为是模型没下载
+    if (location.protocol === 'file:') {
+      throw new Error('单文件本地模式（file://）下浏览器禁止创建识别引擎的 Worker，本地识别不可用；请在项目根目录运行 npx vite preview --mode single 后访问 localhost 地址测试，或直接使用挂网地址/云端识别');
+    }
     progressSink = opts.onProgress ?? null;
     try {
       let pipeline = await getPipeline();

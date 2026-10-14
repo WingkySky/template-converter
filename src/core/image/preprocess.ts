@@ -14,7 +14,7 @@ export interface GrayImage {
 export interface PreprocessParams {
   /** 短边目标放大倍数（实际取值受 maxShortSide 约束） */
   scale: number;
-  /** 放大后短边上限：内存与 Tesseract 耗时护栏（A4 300dpi 扫描件短边 ≈2480，不放大） */
+  /** 放大后短边上限：内存与本地引擎耗时护栏（A4 300dpi 扫描件短边 ≈2480，不放大） */
   maxShortSide: number;
   grayscale: boolean;
   /** 对比度拉伸系数：out = (in - 128) * contrast + 128 */

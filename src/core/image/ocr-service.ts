@@ -82,8 +82,8 @@ async function getProvider(id: OcrEngineId): Promise<OcrProvider> {
     const { createLlmProvider } = await import('./providers/llm-provider');
     return createLlmProvider(loadOcrSettings());
   }
-  const { tesseractProvider } = await import('./providers/tesseract-provider');
-  return tesseractProvider;
+  const { paddleProvider } = await import('./providers/paddle-provider');
+  return paddleProvider;
 }
 
 /**

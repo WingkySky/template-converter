@@ -15,6 +15,18 @@
     document.documentElement.dataset.theme = t;
   })();
 </script>
+<!-- 本地 OCR 引擎（PaddleOCR 官方浏览器 SDK）主入口的裸依赖解析：
+     主入口经 jsDelivr 运行时动态 import（见 paddle-provider.ts），这三个裸依赖
+     也走 CDN，均不进构建产物。import map 标签内必须为纯 JSON，且须先于任何 module script。 -->
+<script type="importmap">
+  {
+    "imports": {
+      "js-yaml": "https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/+esm",
+      "clipper-lib": "https://cdn.jsdelivr.net/npm/clipper-lib@6.4.2/+esm",
+      "@techstark/opencv-js": "https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/+esm"
+    }
+  }
+</script>
 <script type="module" src="/src/main.ts"></script>
 </head>
 <body>

@@ -47,7 +47,7 @@ export interface OcrRecognizeOptions {
   onProgress?: (p: OcrProgress) => void;
 }
 
-/** Provider 接口：本地 Tesseract 与云端 LLM 各实现一份（设计 §3 双引擎抽象） */
+/** Provider 接口：本地 PaddleOCR 与云端 LLM 各实现一份（设计 §3 双引擎抽象） */
 export interface OcrProvider {
   id: 'local' | 'llm';
   recognize(image: OcrImageInput, opts?: OcrRecognizeOptions): Promise<OcrEngineResult>;

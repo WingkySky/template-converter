@@ -123,7 +123,7 @@ export function processFile(file: File): void {
     reader.onload = async e => {
       try {
         const data = (e.target as FileReader).result as ArrayBuffer;
-        // 按需加载 OCR 编排（与 pdf.js 同模式：仅图片分支触达；含 Tesseract/LLM 双引擎选择）
+        // 按需加载 OCR 编排（与 pdf.js 同模式：仅图片分支触达；含本地/LLM 双引擎选择）
         const { importImageSource } = await import('../../core/image/ocr-service');
         const item = await importImageSource(
           new Blob([data], { type: file.type || 'image/png' }),

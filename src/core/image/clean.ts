@@ -1,6 +1,6 @@
 // OCR 结果清洗层（2026-10-14 用户反馈补强）：两引擎都会把「非数据字符」带进单元格——
 // LLM 会输出 JSON 引号伪影（"130403…）与表格竖线（…3326. / 39315.71|20768.06），
-// 本地 Tesseract 还会把边框线读成字符。本层在 recognizeCanvasRaw 出口统一清洗，
+// 本地引擎还会把边框线读成字符。本层在 recognizeCanvasRaw 出口统一清洗，
 // 只作用于图片源，绝不触碰 CSV/Excel/PDF 文本管线的数据。
 // 原则：只删「不可能是数据」的字符，不做任何语义修正——识别错字留给校验层 + 人工校对
 // （spec §6），清洗不能变成静默改数。
@@ -36,7 +36,7 @@ function toHalfWidth(s: string): string {
 export function cleanOcrCell(raw: string): string {
   let t = String(raw ?? '').trim();
   if (!t) return '';
-  // 1) 表格边框竖线：任何位置出现都删除（含 Tesseract 词块内的嵌入式竖线）
+  // 1) 表格边框竖线：任何位置出现都删除（含词块内的嵌入式竖线）
   t = t.replace(PIPE_RE, '');
   // 2) 首尾引号
   t = t.replace(EDGE_QUOTES_RE, '').trim();

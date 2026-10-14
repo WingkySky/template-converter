@@ -2,6 +2,26 @@
 
 日期：2026-10-14 · 设计依据：[2026-10-14-paddle-local-engine-design.md](../specs/2026-10-14-paddle-local-engine-design.md)
 
+## 实施要点沉淀（实现过程的偏差修正，2026-10-14）
+
+1. **import map 标签内必须是纯 JSON**：`<script type="importmap">` 内写 HTML 注释会让
+   浏览器静默忽略整张表（控制台警告），SDK 裸依赖解析失败 → 主模块加载永久挂起。
+   注释写在标签外。
+2. **fetch 大文本必须整体解码**：按 chunk `TextDecoder().decode()` 会把跨块边界的
+   UTF-8 多字节字符劈坏，坏 worker 脚本经 Blob URL 静默启动失败（SDK 永远等不到响应）。
+   累积字节、最后 `new TextDecoder().decode(all)`。
+3. **分格粘连 → `textDetUnclipRatio: 1.0`**：Paddle 行级框带 unclip 膨胀（默认 1.5），
+   右对齐金额与右邻列（卡号）的框间隙被压到共享几何管线 0.75×字号分格阈值之下，
+   两列粘进一格——与分辨率/OOM 无关（全分辨率也复现）。实测 1.5/1.2 粘连、1.0 分离，
+   置信度 99.7→99.6 基本无损。只动推理参数，不碰几何管线（compare 零变化保住）。
+4. **OOM 降级三段式**：4101×783 大图在 worker 内偶发 `OrtRun std::bad_alloc`（WASM 堆
+   碎片化，同负载可成功）→ 销毁 pipeline（`dispose()`，新 worker=新堆）原尺寸重试 →
+   仍溢出才降 1/2 分辨率兜底（降分辨率会造成检测框粘连，只作最后手段；坐标按实际
+   推理画布高度翻转）。
+5. **环境备注（非产品问题）**：ZCode IAB 对源有逐源网络授权怪癖（8931 端口源已授权可拉
+   bcebos，新源 5199/localhost 秒拒 `Failed to fetch`）——dev 冒烟须用 127.0.0.1:8931 起
+   vite。挂网形态（github.io）与 bcebos CORS 反射无关此怪癖。
+
 ## Spike 验证结论（2026-10-14 实测，scratch 页 + IAB/Edge，不涉主线代码）
 
 设计 §3 的四项验证，三项已定论、一项待样张：

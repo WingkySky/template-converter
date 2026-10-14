@@ -1,4 +1,4 @@
-// 识别设置弹层（设计 §4）：引擎选择（本地 Tesseract 默认 / 云端 LLM 可选）与云端
+// 识别设置弹层（设计 §4）：引擎选择（本地 PaddleOCR 默认 / 云端 LLM 可选）与云端
 // 三件套（baseURL / apiKey / model）。key 仅存本浏览器 localStorage（io/ocr-settings）；
 // 开启云端即身份证/卡号/金额发送至所填服务——面板红字明示（设计 §5.2）。
 // 弹层骨架静态位于 index.html，事件委托挂弹层根节点（与 kb-config-panel 同模式）。
@@ -14,7 +14,7 @@ function renderPanel(settings: OcrSettings): void {
       <label><input type="radio" name="ocr-engine" value="auto" data-action="ocrsEngineChange" ${settings.engine === 'auto' ? 'checked' : ''}>
         <span><strong>自动（推荐）</strong>——已配置下方 API key 时用云端 LLM 识别（实测表格结构还原显著更好），云端失败自动回落本地并提示原因；未配置 key 时直接用本地</span></label>
       <label><input type="radio" name="ocr-engine" value="local" data-action="ocrsEngineChange" ${settings.engine === 'local' ? 'checked' : ''}>
-        <span><strong>仅本地</strong>——Tesseract.js 在浏览器内运行，身份证/卡号/金额不出本机；首次识别需联网下载模型（约数 MB），之后浏览器缓存承载复用</span></label>
+        <span><strong>仅本地</strong>——PaddleOCR（PP-OCRv5）在浏览器内运行，身份证/卡号/金额不出本机；首次识别需联网下载组件与模型（约 45MB），之后浏览器缓存承载复用</span></label>
       <label><input type="radio" name="ocr-engine" value="llm" data-action="ocrsEngineChange" ${settings.engine === 'llm' ? 'checked' : ''}>
         <span><strong>仅云端</strong>——多模态 LLM 直接看图输出表格，准确率更高，需自备 API key；失败不回落，直接报错</span></label>
     </div>

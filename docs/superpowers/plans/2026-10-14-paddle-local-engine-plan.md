@@ -25,7 +25,17 @@
    （在 worker 创建步即抛 SecurityError，先于模型下载）——provider 识别 `location.protocol
    === 'file:'` 直接报「请用 `npx vite preview --mode single` 或挂网/云端」，避免误读为
    模型下载失败。`vite preview` 默认伺服 dist/（普通构建，可能为旧版本）——测单文件产物
-   用 `npm run preview:single`（= `vite preview --mode single`，伺服 dist-single/）。
+   用 `npm run preview:single`（= `vite preview --mode single`，伺服 dist-single/）；
+   注意 preview 进程被杀可能残留 node 僵尸占端口（TaskStop 只杀包装层），重启前
+   `taskkill` 清理。
+7. **格线感知分列（grid-cols.ts，用户反馈「分列不行」的结构性修复）**：Excel/表格截图
+   表头左对齐+数字右对齐，词块框 x 区间零/低重叠，共享管线的列带推断（≥0.5×窄者重叠
+   融合）会表头/数据错位一格（真实样张：第一笔的值进凭空「列3」、整列第二笔丢失）。
+   这类截图带完整表格线，竖线即权威列边界——内容行范围逐列统计暗像素覆盖率
+   （lum<240，阈值 0.85：实测边框 0.98~1.0 vs 最密文本列 0.68），≥3 条线即按区归位
+   词块（区内横向分离条目按 0.75×字号拆子格，兜漏检边框）；检测失败回落推断路径。
+   共享管线零改动（compare 零变化），pdf-text 仅 export normalizeCellText。
+   置信度语义同步澄清：横幅改「字符置信度（仅衡量文字识别，不代表列位置/结构正确）」。
 
 ## Spike 验证结论（2026-10-14 实测，scratch 页 + IAB/Edge，不涉主线代码）
 

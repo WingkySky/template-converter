@@ -19,6 +19,7 @@
 //  4) worker-entry 文件名含内容哈希（C9UNuyOJ）——升级 SDK 版本时必须同步更新 WORKER_URL。
 import type { OcrEngineResult, OcrImageInput, OcrProgress, OcrProvider, OcrWord } from '../types';
 import { ocrWordsToRows } from '../ocr-words';
+import { detectColumnBorders } from '../grid-cols';
 
 const SDK_VERSION = '0.4.2';
 const SDK_CDN = `https://cdn.jsdelivr.net/npm/@paddleocr/paddleocr-js@${SDK_VERSION}`;
@@ -166,6 +167,20 @@ function isOomError(err: unknown): boolean {
   return /bad_alloc|out of memory|OOM|OrtRun/i.test(err instanceof Error ? err.message : String(err));
 }
 
+/** 表格竖线检测（内容 y 范围取词块覆盖范围）；任何异常都回落 undefined（推断归带路径） */
+function detectBordersSafe(canvas: HTMLCanvasElement, words: OcrWord[]): number[] | undefined {
+  try {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return undefined;
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const yMin = Math.max(0, Math.min(...words.map(w => w.y)) - 4);
+    const yMax = Math.min(canvas.height, Math.max(...words.map(w => w.y + w.h)) + 4);
+    return detectColumnBorders(imageData, yMin, yMax);
+  } catch {
+    return undefined;
+  }
+}
+
 export const paddleProvider: OcrProvider = {
   id: 'local',
   async recognize(image: OcrImageInput, opts = {}): Promise<OcrEngineResult> {
@@ -203,7 +218,9 @@ export const paddleProvider: OcrProvider = {
       }
       const words = paddleResultToWords(result?.items);
       if (!words.length) return { rows: [], meanConfidence: null, engine: 'local' };
-      const { rows, meanConfidence } = ocrWordsToRows(words, activeCanvas.height);
+      // 表格竖线检测（画布坐标与词块一致——含 OOM 降级后的实际推理画布）；失败回落推断归带
+      const borders = detectBordersSafe(activeCanvas, words);
+      const { rows, meanConfidence } = ocrWordsToRows(words, activeCanvas.height, borders);
       return { rows, meanConfidence, engine: 'local' };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

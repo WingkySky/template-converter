@@ -51,8 +51,9 @@ function median(nums: number[]): number {
   return sorted[Math.floor(sorted.length / 2)];
 }
 
-/** 折叠空白；「纯数字+空白」且去空格后 ≥10 位的视为卡号/证件号排版，去掉内部空白 */
-function normalizeCellText(text: string): string {
+/** 折叠空白；「纯数字+空白」且去空格后 ≥10 位的视为卡号/证件号排版，去掉内部空白。
+ *  导出供格线分列路径（grid-cols）复用，保持同一清洗口径（仅加 export，行为不变）。 */
+export function normalizeCellText(text: string): string {
   let t = text.replace(/[\u200B\u200C\u200D]/g, '').replace(/\s+/g, ' ').trim();
   if (/^\d[\d\s]*$/.test(t) && t.replace(/\s/g, '').length >= 10) {
     t = t.replace(/\s/g, '');

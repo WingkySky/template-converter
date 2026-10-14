@@ -9,6 +9,7 @@
 //     词块溯源，为不复制几何管线，格级标记完全交给 validate.ts（实施计划要点 2/3）。
 import type { Rows } from '../../types';
 import { pdfTextItemsToRows } from '../parser/pdf-text';
+import { wordsToGridRows } from './grid-cols';
 import type { OcrWord } from './types';
 
 export interface OcrWordsToRowsResult {
@@ -17,12 +18,24 @@ export interface OcrWordsToRowsResult {
   meanConfidence: number | null;
 }
 
-export function ocrWordsToRows(words: OcrWord[], imageHeight: number): OcrWordsToRowsResult {
+/**
+ * OCR 词块 → 表格行。两条路径：
+ *  - borders（格线 x 坐标，≥3 条）传入时走格线分列（wordsToGridRows）——带框线截图的
+ *    表头/数据框 x 区间错位问题在推断式归带下无解（见 grid-cols 头注释），格线是这类
+ *    截图的权威列边界；
+ *  - 否则走共享几何管线 pdfTextItemsToRows（扫描件无框线 / 检测失败时的回落路径）。
+ */
+export function ocrWordsToRows(words: OcrWord[], imageHeight: number, borders?: number[]): OcrWordsToRowsResult {
   const real = words.filter(w => w.text && w.text.trim() && w.w > 0 && w.h > 0);
   if (!real.length) return { rows: [], meanConfidence: null };
   const meanConfidence = Math.round(
     (real.reduce((s, w) => s + w.confidence, 0) / real.length) * 10,
   ) / 10;
+  if (borders && borders.length >= 3) {
+    const { rows } = wordsToGridRows(real, borders);
+    if (rows.length) return { rows, meanConfidence };
+    // 格线路径空结果（异常框线）时回落推断路径
+  }
   const items = real.map(w => ({
     str: w.text,
     x: w.x,

@@ -10,8 +10,8 @@
 |---|---|---|
 | ① 资源可控性 | **通过** | 模型托管 paddle-model-ecology.bj.bcebos.com（百度 BOS），GET/OPTIONS 均回 `Access-Control-Allow-Origin`（反射任意 Origin）——GitHub Pages 挂网直接可用，无需迁移模型；det 4.8MB + rec 16.7MB；SDK 支持自定义模型 URL（`ModelAsset.url`，须为含 `inference.onnx`+`inference.yml` 的未压缩 tar）作为后备。ORT wasm 默认 jsDelivr 12.4MB（纯 wasm）/ 25MB（jsep 含 WebGPU）；worker entry jsDelivr 11.3MB（ACAO:*） |
 | ② 构建/加载 | **通过** | 主入口 dist/index.mjs 仅 81KB 但带 3 个裸依赖（js-yaml/clipper-lib/@techstark/opencv-js）——**生产集成用 import map + CDN 直载**（见下），不进 single 产物；`vite-plugin-singlefile` 会内联 dynamic import（opencv ~8MB 会撑爆单文件），故不走 npm runtime 依赖。全链路冒烟：合成表格 20 个文本行**全部识别正确**（表头/18 位身份证/金额小数点全对），pipeline 就绪 3~13s、wasm 推理 3.4~6.2s |
-| ③ 真实样张 | **待样张** | 需用户提供（红线：仅本地调试，严禁入库/制夹具）；作为实施阶段 0 的验收门槛 |
-| ④ 后端/兼容 | **通过** | wasm 后端可用且稳定；webgpu 可用（det/rec 均 webgpu provider）但首跑 12s 慢于 wasm 6.2s（预热/软渲染）——**默认 `backend: 'wasm'`**，webgpu 留作后续实验。前处理交互未测（合成图未走现有 preprocess 管线），实施时按真实样张调 `PreprocessParams` |
+| ③ 真实样张 | **通过（2026-10-14 实测，门槛达成）** | 真实发放明细截图（约 700 字符，14 行×8 列，含 19 位卡号/带 X 身份证/长银行名）。同图同前处理双引擎对照：**PaddleOCR（PP-OCRv5 mobile）前处理后 meanScore 0.997，全表仅 1 个字错，8 列全部按格干净分离，下拉箭头噪点被前处理消除**；Tesseract 262 词块全碎裂（中文逐字成块、金额小数点劈裂、边框伪影入值、姓名 4 处错字、身份证尾号 X→%、整格丢失）。**结论：明显优于 Tesseract，实施门槛通过**。对比输出仅存会话，个人数据不入库 |
+| ④ 后端/兼容 | **通过** | wasm 后端可用且稳定；webgpu 可用（det/rec 均 webgpu provider）但首跑 12s 慢于 wasm 6.2s（预热/软渲染）——**默认 `backend: 'wasm'`**，webgpu 留作后续实验。前处理交互已实测（见③）：现有 `DEFAULT_PREPROCESS`（3x+灰度+对比度 1.5）对 PP-OCR 同样有效且更优（meanScore 0.967→0.997、噪点消失），**无需按引擎区分前处理参数** |
 
 ### Spike 过程中的关键发现（实施必须遵守）
 
@@ -36,7 +36,7 @@
 
 ## 阶段与任务
 
-### 阶段 0：真实样张对比（Spike③ 收口，实施门槛）
+### 阶段 0：真实样张对比（Spike③ 收口，实施门槛）——✅ 已完成（2026-10-14，结论见上表③）
 
 - 用户提供真实样张（微信截图/扫描件，仅本地调试）。
 - 跑法：scratch 冒烟页扩展为「同图分别过 PaddleOCR 与现有 Tesseract 管线」，

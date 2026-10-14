@@ -117,6 +117,15 @@ async function fetchTextWithProgress(url: string, toPercent: (loaded: number, to
   return new TextDecoder().decode(all);
 }
 
+// worker 引用自持：dispose() 的协议消息对已崩坏（bad_alloc）的 worker 可能挂起/失败，
+// 唯一确定的释放是 worker.terminate()（同步、必成功）——否则泄漏整套推理引擎
+// （wasm+模型数百 MB/套），泄漏几次即渲染进程 OOM（2026-10-14 用户实测浏览器崩溃）
+let trackedWorker: Worker | null = null;
+let idleTimer: ReturnType<typeof setTimeout> | null = null;
+// 闲置自动释放：识别引擎常驻数百 MB，分析完成后 90s 无后续识别即归还内存；
+// 下次识别重建（模型走 HTTP 缓存，重建秒级）
+const IDLE_DISPOSE_MS = 90_000;
+
 function getPipeline(): Promise<PaddlePipelineLike> {
   if (!pipelinePromise) {
     pipelinePromise = (async () => {
@@ -127,10 +136,12 @@ function getPipeline(): Promise<PaddlePipelineLike> {
         Math.min(60, Math.round((loaded / total) * 60)));
       // createWorker 是同步签名：fetch 必须发生在 create 之前
       const blobUrl = URL.createObjectURL(new Blob([code], { type: 'text/javascript' }));
+      const worker = new Worker(blobUrl, { type: 'module' });
+      trackedWorker = worker;
       return await mod.PaddleOCR.create({
         lang: 'ch',
         ocrVersion: 'PP-OCRv5',
-        worker: { createWorker: () => new Worker(blobUrl, { type: 'module' }) },
+        worker: { createWorker: () => worker },
         // 默认 wasm 后端：spike 实测不慢于 webgpu 首跑，且下载量少 13MB；webgpu 留作后续实验
         ortOptions: { backend: 'wasm', wasmPaths: ORT_WASM_PATHS },
       });
@@ -140,11 +151,24 @@ function getPipeline(): Promise<PaddlePipelineLike> {
   return pipelinePromise;
 }
 
-/** OOM 后销毁重建：bad_alloc 的 WASM 堆已碎片化，同 worker 重试无意义；新 worker 即新堆 */
-async function recreatePipeline(current: PaddlePipelineLike): Promise<PaddlePipelineLike> {
-  try { await current.dispose?.(); } catch { /* 释放失败不阻塞重建 */ }
+/** 彻底释放推理引擎：terminate 同步确定（dispose 协议消息对坏 worker 不可靠） */
+function killPipeline(): void {
+  if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
+  try { trackedWorker?.terminate(); } catch { /* 已死则忽略 */ }
+  trackedWorker = null;
   pipelinePromise = null;
+}
+
+/** OOM 后重建：terminate 旧 worker（新 worker 即新堆），模型走 HTTP 缓存重建秒级 */
+function recreatePipeline(): Promise<PaddlePipelineLike> {
+  killPipeline();
   return getPipeline();
+}
+
+/** 识别结束后闲置计时，超时归还引擎内存 */
+function scheduleIdleDispose(): void {
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => { idleTimer = null; killPipeline(); }, IDLE_DISPOSE_MS);
 }
 
 /** canvas 等比缩小 factor 倍（OOM 降级重试用；白底，避免透明区参与推理） */
@@ -193,6 +217,7 @@ export const paddleProvider: OcrProvider = {
       throw new Error('单文件本地模式（file://）下浏览器禁止创建识别引擎的 Worker，本地识别不可用；请在项目根目录运行 npx vite preview --mode single 后访问 localhost 地址测试，或直接使用挂网地址/云端识别');
     }
     progressSink = opts.onProgress ?? null;
+    if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; } // 连续识别复用引擎
     try {
       let pipeline = await getPipeline();
       // 模型初始化与推理无进度钩子（发生在 worker 内部），走不确定进度
@@ -203,10 +228,10 @@ export const paddleProvider: OcrProvider = {
         [result] = await pipeline.predict(activeCanvas, PREDICT_PARAMS);
       } catch (err) {
         if (!isOomError(err)) throw err;
-        // OOM：销毁重建（新堆）后原尺寸重试；仍溢出才降 1/2——
+        // OOM：terminate 旧 worker（新 worker=新堆，无泄漏）原尺寸重试；仍溢出才降 1/2——
         // 降分辨率会让检测框在列间隙小处粘连（实测），只作最后兜底
         progressSink?.({ percent: -1, stage: '内存不足，重建识别引擎重试' });
-        pipeline = await recreatePipeline(pipeline);
+        pipeline = await recreatePipeline();
         try {
           [result] = await pipeline.predict(activeCanvas, PREDICT_PARAMS);
         } catch (err2) {
@@ -230,6 +255,7 @@ export const paddleProvider: OcrProvider = {
       throw err;
     } finally {
       progressSink = null;
+      scheduleIdleDispose(); // 90s 无后续识别即归还引擎内存（防常驻数百 MB 拖垮渲染进程）
     }
   },
 };

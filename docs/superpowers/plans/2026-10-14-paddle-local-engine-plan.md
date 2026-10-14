@@ -36,6 +36,12 @@
    词块（区内横向分离条目按 0.75×字号拆子格，兜漏检边框）；检测失败回落推断路径。
    共享管线零改动（compare 零变化），pdf-text 仅 export normalizeCellText。
    置信度语义同步澄清：横幅改「字符置信度（仅衡量文字识别，不代表列位置/结构正确）」。
+8. **浏览器 OOM 崩溃三修（用户反馈「分析时易崩溃」）**：① worker 引用自持 + OOM 重建/
+   闲置释放一律 `worker.terminate()`（同步必成）——SDK `dispose()` 的协议消息对已崩坏
+   worker 会挂起/失败，原实现 catch 后放走旧 worker = 每次泄漏整套推理引擎（数百 MB），
+   泄漏数次即渲染进程 OOM；② 识别结束闲置 90s 自动 terminate 归还内存（下次识别 HTTP
+   缓存重建秒级），连续识别清除计时复用引擎；③ `recognizeCanvasRaw` 的 dataUrl（大图
+   base64）改为仅云端引擎路径生成，本地路径不再白付一笔内存/CPU。
 
 ## Spike 验证结论（2026-10-14 实测，scratch 页 + IAB/Edge，不涉主线代码）
 

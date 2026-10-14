@@ -97,13 +97,14 @@ export async function recognizeCanvasRaw(
 ): Promise<OcrEngineResult> {
   const settings = loadOcrSettings();
   const processed = preprocessCanvas(src, opts.preprocess ?? DEFAULT_PREPROCESS);
+  // dataUrl 仅云端引擎需要（base64 大图，本地路径生成即浪费内存/CPU——OOM 敏感场景）
+  const order = pickEngineOrder(opts.engine ?? settings.engine, !!settings.llm.apiKey.trim());
   const image = {
     canvas: processed,
-    dataUrl: processed.toDataURL('image/png'),
+    dataUrl: order.includes('llm') ? processed.toDataURL('image/png') : '',
     width: processed.width,
     height: processed.height,
   };
-  const order = pickEngineOrder(opts.engine ?? settings.engine, !!settings.llm.apiKey.trim());
   let llmError: string | null = null;
   for (const id of order) {
     const provider = await getProvider(id);

@@ -91,7 +91,7 @@ function failTask(task: UploadTask, errorHint: string): void {
   onPendingSettled();
 }
 
-// 全部文件落定（成功或失败）后的统一收尾（设计 §4：归零即刷累加条 + 进入映射）
+// 失败路径归零收尾（全部文件失败/落定，且无成功可提前进入时兜底）
 function onPendingSettled(): void {
   if (state.pendingFiles > 0) return;
   updateAccumIndicator();
@@ -244,7 +244,11 @@ export function initUploadTasksDelegate(): void {
 
 export function onFileParsed(): void {
   state.pendingFiles--;
-  onPendingSettled();
+  // 首个成功即进入映射步骤，后续完成自动追加数据表卡片（解析不再阻塞后续步骤）；
+  // file-input 复位仍待全部落定
+  updateAccumIndicator();
+  showMappingStep();
+  if (state.pendingFiles <= 0) (byId('file-input') as HTMLInputElement).value = '';
 }
 
 export function updateAccumIndicator(): void {

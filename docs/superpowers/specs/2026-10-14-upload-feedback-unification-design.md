@@ -111,3 +111,12 @@ interface UploadTask {
 - IAB 冒烟（127.0.0.1:8931）：拖入大 PDF 瞬间出行；扫描件 PDF 显示逐页 OCR 进度；
   失败行重试成功；全程无 alert。
 - `npm run compare` 行为回归必跑。
+
+### 补充决策（2026-10-14 晚，用户反馈）
+
+**解析不阻塞映射步骤**：任一文件解析成功即刷新累加条并进入映射步骤
+（`onFileParsed` 无条件 `updateAccumIndicator()` + `showMappingStep()`），
+后续完成的文件自动追加数据表卡片；不再等待全部文件落定。
+`file-input` 复位仍待归零；失败路径归零收尾不变（`onPendingSettled`）。
+已知取舍：映射视图整体重渲染，后台文件完成瞬间若正开着下拉框会被收起
+（与既有"追加第二批文件"行为同构）；主线程解析的瞬时卡顿不在范围内（worker 化已否决）。

@@ -62,11 +62,14 @@ describe('onFileParsed', () => {
     expect(dom.el('mapping-content').innerHTML).toContain('请至少勾选一个数据表以继续列映射');
   });
 
-  it('计数未归零时不触发渲染', () => {
+  it('计数未归零时也刷新累加条并渲染映射步骤（首个成功即进入，不等全部落定）', () => {
     state.pendingFiles = 3;
+    dom.el('file-input').value = '待清';
     onFileParsed();
     expect(state.pendingFiles).toBe(2);
-    expect(dom.el('mapping-content').innerHTML).toBe('');
+    expect(dom.el('accum-indicator').innerHTML).toContain('data-action="resetAll"');
+    expect(dom.el('mapping-content').innerHTML).not.toBe('');
+    expect(dom.el('file-input').value).toBe('待清');
   });
 });
 

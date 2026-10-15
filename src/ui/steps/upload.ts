@@ -12,6 +12,7 @@ import { buildSourceItem } from '../../core/parser/source-item';
 import { analyzeWorkbookSheets } from '../../core/parser/excel';
 import { showMappingStep } from './mapping';
 import type { OcrProgress } from '../../core/image/types';
+import type { Rows } from '../../types';
 
 // ---- resetAll 接缝 ----
 // resetAll 本体随导出/重置侧归属主智能体（steps/export.ts，尚未落位），此处不得
@@ -30,13 +31,13 @@ export function invokeResetAll(): void {
 }
 
 // ---- 上传任务行（设计 §2：上传 UI 的局部状态，不进 state.ts）----
-type UploadTaskKind = 'csv' | 'excel' | 'pdf' | 'image' | 'unknown';
+type UploadTaskKind = 'csv' | 'excel' | 'pdf' | 'image' | 'paste' | 'unknown';
 // 完成即从列表移除（折叠进累加条），不留 done 状态
 type UploadTaskStatus = 'parsing' | 'failed';
 
 interface UploadTask {
   id: number;
-  file: File; // 保留引用，行内重试用
+  file?: File; // 保留引用，行内重试用；paste 任务无文件（不可重试）
   fileName: string;
   kind: UploadTaskKind;
   status: UploadTaskStatus;
@@ -56,8 +57,8 @@ function renderTasks(): void {
   if (!el) return; // 容器缺失时静默（Node 测试桩兼容口径，同旧 #ocr-progress）
   el.innerHTML = uploadTasks.map(t => {
     if (t.status === 'failed') {
-      // unknown（不支持的格式）重试无意义，不提供重试按钮（设计 §4）
-      const retry = t.kind !== 'unknown'
+      // unknown（不支持的格式）与 paste（剪贴板可能已变）重试无意义，不提供重试按钮（设计 §4）
+      const retry = t.kind !== 'unknown' && t.kind !== 'paste'
         ? `<button class="btn btn-secondary btn-sm" data-action="retryTask" data-task-id="${t.id}">${icon('refresh', 13)} 重试</button>`
         : '';
       return `<div class="upload-task-row failed">${icon('x', 14)} <span class="ut-name">${escapeHTML(t.fileName)}</span><span class="ut-stage">${escapeHTML(t.errorHint || '')}</span>${retry}</div>`;
@@ -118,24 +119,110 @@ export function initUploadArea(): void {
     e.preventDefault(); uploadArea.classList.remove('dragover');
     if (e.dataTransfer!.files.length) handleFiles(e.dataTransfer!.files);
   });
-  // 剪贴板粘贴上传（设计 §4）：仅当剪贴板含图片文件时接管（微信截图 Ctrl+V 直达），
-  // 文本粘贴不受任何影响。document 级监听，随 initUploadArea 装配一次。
-  document.addEventListener('paste', e => {
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
+  // 剪贴板粘贴上传（设计：剪贴板统一路由）：document 级监听随 initUploadArea 装配一次，
+  // 按载荷优先级分发——文件（Explorer 复制）→ 图片（截图）→ 表格（Excel/网页复制）；
+  // 可编辑目标内粘贴完全不接管，无表格签名（无 \t、无 <table>）静默忽略。
+  document.addEventListener('paste', handlePasteEvent);
+}
+
+// ---- 剪贴板载荷判别（纯函数，node 桩测可直调）----
+export type ClipboardPayload =
+  | { kind: 'files'; files: File[] }
+  | { kind: 'image'; file: File }
+  | { kind: 'table'; rows: Rows };
+
+/** 鸭子类型口径：真实 DataTransfer 或测试桩（files/items/getData 皆可选） */
+export interface ClipboardLike {
+  files?: ArrayLike<File>;
+  items?: ArrayLike<{ kind: string; type: string; getAsFile: () => File | null }>;
+  getData?: (type: string) => string;
+}
+
+/** 可编辑目标（输入框/文本域/contenteditable）内粘贴不接管，原生行为优先 */
+function isEditableTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  if (!el || !el.tagName) return false;
+  const tag = el.tagName.toUpperCase();
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable === true;
+}
+
+export function detectClipboardPayload(data: ClipboardLike | null, editableTarget: boolean): ClipboardPayload | null {
+  if (!data || editableTarget) return null;
+  // P1 文件（Explorer 复制；图片文件亦走此路，与拖拽同管线）
+  if (data.files && data.files.length) return { kind: 'files', files: Array.from(data.files) };
+  // P2 图片（截图；只取第一张，与旧监听同口径）
+  if (data.items) {
+    for (let i = 0; i < data.items.length; i++) {
+      const item = data.items[i];
       if (item.kind === 'file' && item.type.startsWith('image/')) {
         const file = item.getAsFile();
-        if (file) {
-          const named = new File([file], file.name || `剪贴板图片_${Date.now()}.png`, { type: file.type });
-          handleFiles([named]);
-          e.preventDefault();
-        }
-        break; // 只取第一张图片
+        if (file) return { kind: 'image', file };
       }
     }
+  }
+  // P3 表格：text/html 含 <table> 优先（Excel/WPS 与网页复制都带），取行数最多的表
+  // （Excel 剪贴板里可能有包装/元数据小表），空结果回落 TSV；text/plain 含 \t 即表格签名
+  const html = data.getData?.('text/html') || '';
+  if (/<table[\s>]/i.test(html)) {
+    const rows = extractHtmlTableRows(html);
+    if (rows.length) return { kind: 'table', rows };
+  }
+  const text = data.getData?.('text/plain') || '';
+  if (text.includes('\t')) return { kind: 'table', rows: parseCSV(text, '\t') };
+  return null;
+}
+
+// DOMParser 提取表格行：逐 tr → 逐 td/th 取 textContent 去首尾空白，跳过全空行。
+// colspan/嵌套表不支持（取摊平文本）；node 环境无 DOMParser，由浏览器验收覆盖。
+function extractHtmlTableRows(html: string): Rows {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const tables = Array.from(doc.querySelectorAll('table'));
+  let best: Element | null = null;
+  for (const t of tables) {
+    if (!best || t.querySelectorAll('tr').length > best.querySelectorAll('tr').length) best = t;
+  }
+  if (!best) return [];
+  const rows: string[][] = [];
+  best.querySelectorAll('tr').forEach(tr => {
+    const cells = Array.from(tr.querySelectorAll('td,th')).map(td => (td.textContent || '').trim());
+    if (cells.some(c => c !== '')) rows.push(cells);
   });
+  return rows;
+}
+
+// paste 事件入口：判别载荷 → preventDefault（仅接管时）→ 分发
+export function handlePasteEvent(e: ClipboardEvent): void {
+  const payload = detectClipboardPayload(
+    e.clipboardData as unknown as ClipboardLike | null,
+    isEditableTarget(e.target),
+  );
+  if (!payload) return;
+  e.preventDefault();
+  if (payload.kind === 'files') {
+    handleFiles(payload.files);
+  } else if (payload.kind === 'image') {
+    const f = payload.file;
+    const named = new File([f], f.name || `剪贴板图片_${Date.now()}.png`, { type: f.type });
+    handleFiles([named]);
+  } else {
+    importPastedTable(`剪贴板表格_${Date.now()}`, payload.rows);
+  }
+}
+
+// P3 粘贴表导入：任务行反馈与文件路径一致（同步解析，通常瞬间折叠进累加条）；
+// paste 任务无 File 引用不可重试，失败同 unknown 无重试按钮
+function importPastedTable(fileName: string, rows: Rows): void {
+  state.pendingFiles++;
+  state.accumFileCount++;
+  const task: UploadTask = { id: ++uploadTaskSeq, fileName, kind: 'paste', status: 'parsing', stage: '解析粘贴数据…' };
+  uploadTasks.push(task);
+  renderTasks();
+  if (!rows.length) {
+    failTask(task, '剪贴板内容不是有效表格');
+    return;
+  }
+  state.sources.push(buildSourceItem({ type: 'csv', fileName, rows }));
+  completeTask(task);
 }
 
 export function handleFileInput(e: Event): void {
@@ -170,7 +257,11 @@ const IMAGE_EXTS = ['png', 'jpg', 'jpeg', 'webp', 'bmp'];
 // 保留回调式 FileReader（旧代码同构）：CSV/XLSX 在同步 FileReader 桩（Node 回归驱动器）
 // 下于 handleFiles 内同步完成；浏览器中依旧异步。onload 内 catch 统一行内失败。
 function processOne(task: UploadTask): void {
-  const { file } = task;
+  const file = task.file;
+  if (!file) {
+    failTask(task, '缺少文件引用'); // paste 任务不走本函数，防御性兜底
+    return;
+  }
   if (task.kind === 'unknown') {
     failTask(task, '不支持的文件格式');
     return;

@@ -2,7 +2,8 @@
 // 仅补充类型注解，不改变任何行为。
 import type { Rows } from '../../types';
 
-export function parseCSV(text: string): Rows {
+// delimiter：字段分隔符，默认逗号；粘贴的表格数据传 '\t'（TSV），引号处理同口径复用。
+export function parseCSV(text: string, delimiter = ','): Rows {
   const rows: string[][] = [];
   let row: string[] = [];
   let cell = '';
@@ -31,7 +32,7 @@ export function parseCSV(text: string): Rows {
       if (ch === '"') {
         inQuotes = true;
         i++;
-      } else if (ch === ',') {
+      } else if (ch === delimiter) {
         row.push(cell);
         cell = '';
         i++;

@@ -196,3 +196,23 @@ describe('handlePasteEvent（粘贴路由分发）', () => {
     expect(dom.el('upload-tasks').innerHTML).toContain('剪贴板图片_');
   });
 });
+
+describe('CSV 源构造含 analysis（多 CSV 上传非预览源在 confirmMapping 依赖它）', () => {
+  it('handleFiles 解析 CSV 后每个 source 都带可用 autoMap（修复前为 null 被整源丢弃）', () => {
+    const csv = '姓名,身份证号码,税前金额\n张三,11010119900307421X,5200.50\n';
+    vi.stubGlobal('FileReader', class {
+      onerror: unknown = null;
+      onload: ((e: { target: { result: string } }) => void) | null = null;
+      readAsText(): void { this.onload?.({ target: { result: csv } }); }
+      readAsArrayBuffer(): void {}
+    });
+    handleFiles([{ name: '甲.csv' } as File, { name: '乙.csv' } as File]);
+    expect(state.sources).toHaveLength(2);
+    for (const s of state.sources) {
+      expect(s.type).toBe('csv');
+      expect(s.analysis).not.toBeNull();
+      expect(s.analysis!.autoMap.cols['0'].type).toBe('name');
+      expect(s.analysis!.autoMap.cols['2'].type).toBe('amount');
+    }
+  });
+});

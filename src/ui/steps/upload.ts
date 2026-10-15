@@ -8,8 +8,7 @@ import { icon } from '../icons';
 import { byId, delegateAction, escapeHTML } from '../dom';
 import { state } from '../../state';
 import { parseCSV, isGarbled } from '../../core/parser/parse-csv';
-import { buildSourceItem } from '../../core/parser/source-item';
-import { analyzeWorkbookSheets } from '../../core/parser/excel';
+import { analyzeWorkbookSheets, buildCsvSource } from '../../core/parser/excel';
 import { showMappingStep } from './mapping';
 import type { OcrProgress } from '../../core/image/types';
 import type { Rows } from '../../types';
@@ -221,7 +220,7 @@ function importPastedTable(fileName: string, rows: Rows): void {
     failTask(task, '剪贴板内容不是有效表格');
     return;
   }
-  state.sources.push(buildSourceItem({ type: 'csv', fileName, rows }));
+  state.sources.push(buildCsvSource(fileName, rows));
   completeTask(task);
 }
 
@@ -277,7 +276,7 @@ function processOne(task: UploadTask): void {
           r2.onerror = () => failTask(task, r2.error?.message || '文件读取失败');
           r2.onload = e2 => {
             try {
-              state.sources.push(buildSourceItem({ type: 'csv', fileName: file.name, rows: parseCSV((e2.target as FileReader).result as string) }));
+              state.sources.push(buildCsvSource(file.name, parseCSV((e2.target as FileReader).result as string)));
               completeTask(task);
             } catch (err) {
               console.error(`${task.fileName} 解析失败`, err);
@@ -286,7 +285,7 @@ function processOne(task: UploadTask): void {
           };
           r2.readAsText(file, 'gbk');
         } else {
-          state.sources.push(buildSourceItem({ type: 'csv', fileName: file.name, rows: parseCSV(text) }));
+          state.sources.push(buildCsvSource(file.name, parseCSV(text)));
           completeTask(task);
         }
       } else if (task.kind === 'excel') {

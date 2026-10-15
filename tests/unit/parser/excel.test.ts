@@ -5,7 +5,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import * as XLSX from 'xlsx';
-import { analyzeWorkbookSheets, analyzeSheet } from '../../../src/core/parser/excel';
+import { analyzeWorkbookSheets, analyzeSheet, buildCsvSource } from '../../../src/core/parser/excel';
 import type { Rows } from '../../../src/types';
 
 // 读法说明：不要用 XLSX.readFile（对中文路径有兼容问题），统一 readFileSync + type:'buffer'
@@ -88,5 +88,23 @@ describe('analyzeWorkbookSheets × 灵工商社数据(1).xlsx fixture', () => {
   it('空工作簿返回空数组', () => {
     const empty = XLSX.utils.book_new();
     expect(analyzeWorkbookSheets(empty, '空.xlsx')).toEqual([]);
+  });
+});
+
+describe('buildCsvSource（CSV 源构造含 analysis——多 CSV 上传非预览源依赖它）', () => {
+  it('type=csv 且 analysis.autoMap 完整（confirmMapping 非预览源取它的 cols）', () => {
+    const item = buildCsvSource('冒烟甲.csv', SAMPLE_ROWS);
+    expect(item.type).toBe('csv');
+    expect(item.fileName).toBe('冒烟甲.csv');
+    expect(item.selected).toBe(true);
+    expect(item.rows).toBe(SAMPLE_ROWS); // rows 原样保留（confirmMapping 对它现跑 smartDetectTable）
+    const a = item.analysis!;
+    expect(a.sheetName).toBe('冒烟甲.csv');
+    expect(a.dataRowsCount).toBe(2);      // 合计/平台服务费行不计
+    expect(a.autoMap.cols['0'].type).toBe('name');
+    expect(a.autoMap.cols['1'].type).toBe('idCard');
+    expect(a.autoMap.cols['3'].type).toBe('amount');
+    expect(a.autoMap.amountCol).toBe(3);
+    expect(a.autoMap.nameCol).toBe(0);
   });
 });

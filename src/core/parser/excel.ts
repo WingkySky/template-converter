@@ -60,6 +60,14 @@ export function analyzeWorkbookSheets(wb: XLSX.WorkBook, fileName: string): Sour
   }));
 }
 
+/** CSV 源构造（含 analysis.autoMap）——非预览源在 confirmMapping 依赖 analysis.autoMap
+ * （mapping.ts 的 cols 取值），缺失则该源产不出有效行被整源丢弃（多 CSV 上传只有
+ * 「当前预览」那个文件进输出，2026-10-15 修复）；与 excel-sheet/pdf/图片源在创建时
+ * 补齐 analysis 的口径一致。monthHint/yearHint 为 excel 评分专用，CSV 传空。 */
+export function buildCsvSource(fileName: string, rows: Rows): SourceItemData {
+  return buildSourceItem({ type: 'csv', fileName, rows, analysis: analyzeSheet(fileName, rows, '', '') });
+}
+
 export function analyzeSheet(sheetName: string, rows: Rows, monthHint: string, yearHint: string): SheetAnalysis {
   const nonEmpty = (rows || []).filter(row => row.some(cell => String(cell || '').trim() !== ''));
   if (!nonEmpty.length) return { sheetName, rows: [], score: -999, dataRowsCount: 0, headerRowIndex: 0, autoMap: { cols: {} } };

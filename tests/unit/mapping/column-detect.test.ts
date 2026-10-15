@@ -85,6 +85,42 @@ describe('detectColumnMapping', () => {
   });
 });
 
+// 银行名称 vs 银行卡号 仲裁（2026-10-15 用户反馈：卡号常被识别成银行名）
+describe('bankCard 银行名称仲裁', () => {
+  const NOTICE_ROWS: Rows = [
+    ['招商银行', '广东省深圳市威盛大厦支行', '6214857809288808'],
+    ['中国农业银行', '广东省广州市永平支行', '6228480086994408176'],
+  ];
+
+  it('开户行/开户银行/账号 三列并存：开户银行 不抢占 bankCard，账号列认领（用户实测表型）', () => {
+    const r = detectColumnMapping(['开户行', '开户银行', '账号'], NOTICE_ROWS);
+    expect(r.cols['0'].type).toBe('bankName');
+    expect(r.cols['1'].type).toBe('');
+    expect(r.cols['2'].type).toBe('bankCard');
+  });
+
+  it('裸「银行」列装银行名 + 后置「卡号」列：银行列转认 bankName，卡号列认 bankCard', () => {
+    const r = detectColumnMapping(['银行', '卡号'], NOTICE_ROWS.map(([a, , c]) => [a, c]));
+    expect(r.cols['0'].type).toBe('bankName');
+    expect(r.cols['1'].type).toBe('bankCard');
+  });
+
+  it('裸「银行」列装卡号（数据佐证 ≥50% 长数字）：仍认 bankCard（legacy 行为）', () => {
+    const r = detectColumnMapping(['银行'], [[NOTICE_ROWS[0][2]], [NOTICE_ROWS[1][2]]]);
+    expect(r.cols['0'].type).toBe('bankCard');
+  });
+
+  it('显式卡号表头不受数据仲裁影响（卡号列混有金额等脏样本仍认领）', () => {
+    const r = detectColumnMapping(['银行卡号'], [['6217000000000000247'], ['6,266.80']]);
+    expect(r.cols['0'].type).toBe('bankCard');
+  });
+
+  it('无数据行时保持 legacy 纯关键词行为（裸「银行」→ bankCard）', () => {
+    const r = detectColumnMapping(['银行'], []);
+    expect(r.cols['0'].type).toBe('bankCard');
+  });
+});
+
 describe('COL_KEYWORDS / COL_TYPE_LABELS 常量', () => {
   it('COL_KEYWORDS 键集与 legacy 一致（amount 在打分阶段单独处理）', () => {
     expect(Object.keys(COL_KEYWORDS)).toEqual([

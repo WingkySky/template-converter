@@ -2,6 +2,8 @@
 // 仅补充类型注解与显式 export，不改变任何行为。
 // COL_KEYWORDS / COL_TYPE_LABELS 在 legacy.js 中为隐式全局常量（legacy.js L1217/L1232），
 // 供本模块与 smartDetectTable、UI 层共同引用。
+// 唯一行为偏差（2026-10-15，用户反馈卡号常被识别成银行名）：bankCard 认领前的
+// 银行名称仲裁，见 detectColumnMapping 内注释。
 import type { Row, Rows } from '../../types';
 import { getAmountColumnScore, isAmountLikeNumber } from './amount-score';
 
@@ -44,6 +46,24 @@ export interface DetectedColumn {
   samples: string[];
 }
 
+// bankCard 显式字样：表头含这些字样时视为明确的卡号/账号列，不做数据仲裁
+const BANK_CARD_HINT_RE = /卡|账号|帐号|账户|card/i;
+
+/**
+ * 卡号样数据占比：前 12 个非空样本中「去空白后 10~23 位纯数字」的比例。
+ * 无非空样本时返回 1——无数据可佐证就保持 legacy 纯关键词行为。
+ */
+function cardLikeRatio(dataRows: Rows, ci: number): number {
+  let nonEmpty = 0, hits = 0;
+  dataRows.slice(0, 12).forEach(row => {
+    const v = String(row?.[ci] ?? '').trim();
+    if (!v) return;
+    nonEmpty++;
+    if (/^\d{10,23}$/.test(v.replace(/\s+/g, ''))) hits++;
+  });
+  return nonEmpty ? hits / nonEmpty : 1;
+}
+
 /**
  * detectColumnMapping 的返回。
  * amountCol / nameCol 由 analyzeSheet 在识别后补写（legacy 中为动态挂载属性），
@@ -64,7 +84,20 @@ export function detectColumnMapping(headerRow: Row, dataRows: Rows): ColumnMappi
     if (!v) return;
     for (const [type, re] of Object.entries(COL_KEYWORDS)) {
       if (type === 'amount') continue;
-      if (!used.has(type) && re.test(v)) { mapping[i] = type; used.add(type); break; }
+      if (used.has(type) || !re.test(v)) continue;
+      // 银行名称仲裁（2026-10-15 用户反馈：收费通知表「开户行/开户银行/账号」三列并存，
+      // 「开户银行」列因含「银行」抢占 bankCard，支行名被当卡号，真卡号列「账号」落空）：
+      // 表头只有宽泛「银行/bank」语义而无卡/账号字样的列，多半装的是银行名，绝不认 bankCard——
+      // bankName 空闲且数据非卡号样式时顺势认领为 bankName，否则留空让位给后面的真卡号列。
+      if (type === 'bankCard' && !BANK_CARD_HINT_RE.test(v)) {
+        // 数据不像卡号 → 判为银行名称列：bankName 空闲则顺势认领，否则留空让位给真卡号列
+        if (cardLikeRatio(dataRows, i) < 0.5) {
+          if (!used.has('bankName')) { mapping[i] = 'bankName'; used.add('bankName'); }
+          continue;
+        }
+        // 数据确为长数字 → 落到下方 bankCard 认领（裸「银行」列装卡号的 legacy 行为）
+      }
+      mapping[i] = type; used.add(type); break;
     }
   });
 

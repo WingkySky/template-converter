@@ -8,7 +8,7 @@
 // 唯一渲染差异：内联 onclick/onchange/oninput → data-action（事件委托）。
 // showExportStep 依赖经 set/init 注入（不 import legacy.js、不挂 window）。
 import { state } from '../../state';
-import { delegateAction, byId } from '../dom';
+import { delegateAction, byId, escapeHTML } from '../dom';
 import { updateOutputRow, getRemarkPresetValue } from '../steps/export';
 import { visiblePreviewRowCount } from './preview-table';
 
@@ -54,6 +54,42 @@ export function selectAllNoteRows(): void {
 export function clearNoteRowSelection(): void {
   state.selectedNoteRows = [];
   updateNoteSelectionUI();
+}
+
+// ---- 2026-10-15 新增（用户需求）：按文件快速选行——多文件混表时一键选中某文件全部行 ----
+// 非 legacy 搬移；数据源 outputRowMeta.fileName，空名兜底「未命名文件」（与 getSplitGroupCounts 口径一致）。
+
+/** 当前输出按 fileName 分组（保序：按首次出现顺序），供下拉选项与按文件选行共用。 */
+export function getOutputFileGroups(): { fileName: string; rowIdxs: number[] }[] {
+  const groups: { fileName: string; rowIdxs: number[] }[] = [];
+  const byName = new Map<string, { fileName: string; rowIdxs: number[] }>();
+  (state.outputRowMeta || []).forEach((m, i) => {
+    const fn = m.fileName || '未命名文件';
+    let g = byName.get(fn);
+    if (!g) {
+      g = { fileName: fn, rowIdxs: [] };
+      byName.set(fn, g);
+      groups.push(g);
+    }
+    g.rowIdxs.push(i);
+  });
+  return groups;
+}
+
+/** 按文件名选中该文件全部行（替换当前选择）；找不到对应组时静默返回。 */
+export function selectNoteRowsByFile(fileName: string): void {
+  const group = getOutputFileGroups().find(g => g.fileName === fileName);
+  if (!group) return;
+  setSelectedNoteRows(group.rowIdxs);
+  updateNoteSelectionUI();
+}
+
+/** 「按文件选行」下拉 change：读值→弹回占位符（动作语义，不残留状态）→替换选择。 */
+export function onNoteFileSelect(selectEl: HTMLSelectElement): void {
+  const fileName = selectEl.value;
+  if (!fileName) return;
+  selectEl.value = '';
+  selectNoteRowsByFile(fileName);
 }
 
 // 局部更新备注行选择的 UI（复选框状态和计数），不触发全量重渲染
@@ -153,6 +189,13 @@ export function renderRemarkPanel(): string {
   const noteColIdx = getNoteColIdx();
   const hasNoteColumn = noteColIdx >= 0;
   const selectedNoteSet = new Set(state.selectedNoteRows || []);
+  const fileGroups = getOutputFileGroups();
+  // 多文件混表才出「按文件选行」下拉；单文件时与「全选全部记录」等价，不渲染
+  const fileSelectHTML = fileGroups.length > 1 ? `
+      <select id="note-file-select" data-action="onNoteFileSelect" title="按文件快速选中该文件全部行">
+        <option value="">按文件选行…</option>
+        ${fileGroups.map(g => `<option value="${escapeHTML(g.fileName)}" title="${escapeHTML(g.fileName)}">${escapeHTML(g.fileName)}（${g.rowIdxs.length} 行）</option>`).join('')}
+      </select>` : '';
 
   let noteControlsHTML = '';
   if (hasNoteColumn && rows.length > 0) {
@@ -162,6 +205,7 @@ export function renderRemarkPanel(): string {
       <button class="btn btn-secondary btn-sm" data-action="selectVisibleNoteRows">选择当前预览</button>
       <button class="btn btn-secondary btn-sm" data-action="selectAllNoteRows">全选全部记录</button>
       <button class="btn btn-secondary btn-sm" data-action="clearNoteRowSelection">清除选择</button>
+      ${fileSelectHTML}
       <span style="font-size:12px;color:var(--text2);">已选 <strong id="selected-note-count" style="color:var(--accent2);">${selectedNoteSet.size}</strong> 行</span>
       <select id="note-preset" data-action="onNotePresetChange">
         <option value="filename">文件名</option>
@@ -213,6 +257,7 @@ export function initRemarkPanelHandlers(deps: RemarkPanelDeps): void {
     toggleNoteRow: (el) => toggleNoteRow(Number(el.dataset.rowIdx), (el as HTMLInputElement).checked),
     toggleVisibleNoteRows: (el) => toggleVisibleNoteRows((el as HTMLInputElement).checked),
     onNotePresetChange: () => onNotePresetChange(),
+    onNoteFileSelect: (el) => onNoteFileSelect(el as HTMLSelectElement),
   });
   delegateAction(container, 'input', {
     onNoteChange: (el) => onNoteChange(el as HTMLInputElement, Number(el.dataset.rowIdx)),

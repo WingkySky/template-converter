@@ -14,7 +14,9 @@ export function isAmountLikeNumber(value: Cell): boolean {
 
 export function getAmountColumnScore(header: Cell, dataRows: Rows, ci: number): number {
   const h = String(header || '').trim();
-  if (!h || /序号|编号|方式|类型|选择|状态|税源地|开户|账号|账户|手机号|电话|身份证|证件|银行|备注|说明|业务|减除|扣除|速算|核定|预扣|免税|服务费|个税/.test(h)) return -Infinity;
+  // 预扣(?!前)：「应发金额(预扣前)」是税前口径的金额列（友谊发薪明细表头），
+  // 不能被「预扣」误杀；预扣税/预扣后等扣减列仍排除
+  if (!h || /序号|编号|方式|类型|选择|状态|税源地|开户|账号|账户|手机号|电话|身份证|证件|银行|备注|说明|业务|减除|扣除|速算|核定|预扣(?!前)|免税|服务费|个税/.test(h)) return -Infinity;
   let score = 0;
   if (/税前金额|税前收入/i.test(h)) score += 12;
   else if (/计划发放收入|应发金额|实发金额|客户支付合计|付款金额|应发金额/i.test(h)) score += 9;

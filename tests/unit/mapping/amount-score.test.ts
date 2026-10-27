@@ -56,6 +56,12 @@ describe('getAmountColumnScore', () => {
     expect(getAmountColumnScore('', numericRows, 1)).toBe(-Infinity);
   });
 
+  it('「预扣前」不进黑名单（友谊发薪「应发金额★(预扣前)」是税前口径），预扣税/预扣后仍排除', () => {
+    expect(getAmountColumnScore('应发金额★\n(预扣前）', numericRows, 1)).toBe(17); // 9 + 8
+    expect(getAmountColumnScore('预扣税额', numericRows, 1)).toBe(-Infinity);
+    expect(getAmountColumnScore('应发金额(预扣后)', numericRows, 1)).toBe(-Infinity);
+  });
+
   it('无关键词命中时施加低命中率惩罚', () => {
     // 1/12 命中：score = 0 + 0.67 < 6 → -8
     const sparse: Rows = Array.from({ length: 12 }, (_, i) => [i === 0 ? '100' : '不适用']);

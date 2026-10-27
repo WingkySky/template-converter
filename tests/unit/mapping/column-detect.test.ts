@@ -121,6 +121,30 @@ describe('bankCard 银行名称仲裁', () => {
   });
 });
 
+// 「银行卡开户地」含「卡」字不得抢占 bankCard（2026-10-27 友谊发薪明细 ★ 表头，用户反馈
+// 「表头含特殊字符识别差」——★ 本身不影响关键词子串匹配，实际是开户地抢卡号列 + 预扣误杀金额列）
+describe('bankCard 开户地仲裁（友谊发薪 ★ 表头）', () => {
+  const YIYI_HEADER = ['序号', '户名★', '性别★', '身份证号码★', '手机号码★', '银行卡开户行★', '银行卡开户地', '账号★', '应发金额★\n(预扣前）'];
+  const YIYI_ROWS: Rows = [
+    ['1', '郭淑萍', '女', '440126197309091565', '13423651005', '中国邮政储蓄银行南沙区支行', '', '6221805810004948530', '3800.00'],
+    ['2', '梁丽仪', '女', '440126197310185729', '13798077363', '中国邮政储蓄银行沙头支行', '', '6210985814004196574', '4135.00'],
+  ];
+
+  it('银行卡开户地→location、账号★→bankCard、应发金额★(预扣前)→amount（用户实测表型）', () => {
+    const r = detectColumnMapping(YIYI_HEADER, YIYI_ROWS);
+    expect(r.cols['5'].type).toBe('bankName');
+    expect(r.cols['6'].type).toBe('location');
+    expect(r.cols['7'].type).toBe('bankCard');
+    expect(r.cols['8'].type).toBe('amount');
+  });
+
+  it('「银行卡开户地」即使装着卡号样式数据也不认 bankCard', () => {
+    const r = detectColumnMapping(['银行卡开户地', '账号'], [['6214857809288808', '6214857809288809']]);
+    expect(r.cols['0'].type).toBe('location');
+    expect(r.cols['1'].type).toBe('bankCard');
+  });
+});
+
 describe('COL_KEYWORDS / COL_TYPE_LABELS 常量', () => {
   it('COL_KEYWORDS 键集与 legacy 一致（amount 在打分阶段单独处理）', () => {
     expect(Object.keys(COL_KEYWORDS)).toEqual([

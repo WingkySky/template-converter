@@ -49,6 +49,11 @@ export interface DetectedColumn {
 // bankCard 显式字样：表头含这些字样时视为明确的卡号/账号列，不做数据仲裁
 const BANK_CARD_HINT_RE = /卡|账号|帐号|账户|card/i;
 
+// 开户地字样：表头含这些字样时绝不认 bankCard——「银行卡开户地」含「卡」字会骗过
+// BANK_CARD_HINT_RE 抢走 bankCard，真卡号列（如「账号★」）落空（2026-10-27 友谊发薪
+// 明细）；直接跳过让位给后置的 location 认领
+const LOCATION_HEADER_RE = /开户地|开户所属地|银行所属地|税源地/;
+
 /**
  * 卡号样数据占比：前 12 个非空样本中「去空白后 10~23 位纯数字」的比例。
  * 无非空样本时返回 1——无数据可佐证就保持 legacy 纯关键词行为。
@@ -89,6 +94,7 @@ export function detectColumnMapping(headerRow: Row, dataRows: Rows): ColumnMappi
       // 「开户银行」列因含「银行」抢占 bankCard，支行名被当卡号，真卡号列「账号」落空）：
       // 表头只有宽泛「银行/bank」语义而无卡/账号字样的列，多半装的是银行名，绝不认 bankCard——
       // bankName 空闲且数据非卡号样式时顺势认领为 bankName，否则留空让位给后面的真卡号列。
+      if (type === 'bankCard' && LOCATION_HEADER_RE.test(v)) continue;
       if (type === 'bankCard' && !BANK_CARD_HINT_RE.test(v)) {
         // 数据不像卡号 → 判为银行名称列：bankName 空闲则顺势认领，否则留空让位给真卡号列
         if (cardLikeRatio(dataRows, i) < 0.5) {

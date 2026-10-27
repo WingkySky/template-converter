@@ -5,7 +5,7 @@ import { escapeHTML, byId, delegateAction } from '../dom';
 import { icon } from '../icons';
 import { state } from '../../state';
 import type { SourceDataEntry } from '../../state';
-import type { Row, Rows } from '../../types';
+import type { Row, Rows, SourceItem } from '../../types';
 import { smartDetectTable } from '../../core/parser/table-detect';
 import { detectColumnMapping, applyInferredNameByData, COL_TYPE_LABELS } from '../../core/mapping/column-detect';
 import type { ColumnMapping } from '../../core/mapping/column-detect';
@@ -79,9 +79,9 @@ export function showMappingStep(): void {
   const dataRows = source.dataRowsOverride ?? detected.dataRows;
   const autoMap = detectColumnMapping(detected.headerRow, dataRows);
   // 同源保留用户的手动标注（含「不识别」空串）——重渲染合并时用户选择一律优先于自动检测；
-  // 切换预览源不串。见 applyUserTypeOverrides（2026-10-15 用户反馈：手动清空被冲回自动结果）。
-  const sameSource = state.mappingState?.source?.id === source.id;
-  const userTypes = sameSource ? state.mappingState?.userTypes : undefined;
+  // 标注挂在源对象上（source.userTypes），切预览源互不串、切回自动恢复
+  // （2026-10-27 按源记忆，见 docs/superpowers/specs/2026-10-27-mapping-user-types-per-source-design.md）。
+  const userTypes = source.userTypes;
   applyUserTypeOverrides(autoMap, userTypes, detected.headerRow as Row | undefined);
   // 图片源：表头非「姓名」（如「9月」月份标注）时按数据特征推断姓名列（opt-in，仅 source.ocr）
   if (source.ocr) applyInferredNameByData(detected.headerRow, dataRows, autoMap);
@@ -158,7 +158,6 @@ export function showMappingStep(): void {
     source,
     filteredCount: detected.filteredCount || 0,
     ocrValidation: ocrValidation ?? undefined,
-    userTypes: userTypes || {},
   };
 
   // Column mapping
@@ -252,9 +251,11 @@ export function onMapChange(sel: HTMLSelectElement): void {
   const ci = sel.dataset.col as string;
   if (state.mappingState) {
     state.mappingState.mapping!.cols[ci].type = sel.value;
-    // 用户显式标注（含「不识别」空串）单独记录：重渲染合并时用户选择优先，
-    // 否则重新自动检测会把「手动清空」冲回自动结果（2026-10-15 用户反馈回归）
-    state.mappingState.userTypes = { ...(state.mappingState.userTypes || {}), [ci]: sel.value };
+    // 用户显式标注（含「不识别」空串）挂到源对象上（与 dataRowsOverride 同构）：
+    // 按源记忆、切预览源互不串，确认映射时各源用各自标注
+    // （2026-10-27 按源记忆；此前全局单槽切源即丢）
+    const src = state.mappingState.source;
+    if (src) src.userTypes = { ...(src.userTypes || {}), [ci]: sel.value };
   }
   sel.parentElement!.classList.toggle('selected', !!sel.value);
   // 拆分预警/合计核对需跟随用户标注实时更新：重渲染映射页（尽力保留滚动位置；
@@ -289,6 +290,30 @@ export function applyUserTypeOverrides(
   });
 }
 
+/** 各源用自己的表头：预览源沿用 mappingState.headerRow（与重渲染检测同源，行为不变）；
+ *  非预览源取 src.rows[analysis.headerRowIndex]（此前统一用预览源表头，多源列
+ *  结构不同时合并/拆行的备注标签会张冠李戴） */
+function srcHeaderRow(src: SourceItem): Row {
+  if (src.id === state.previewSourceId) return (state.mappingState?.headerRow as Row | undefined) || [];
+  const idx = src.analysis?.headerRowIndex ?? 0;
+  return (src.rows?.[idx] as Row | undefined) || [];
+}
+
+/** 非预览源在 confirmMapping 用的列映射：analysis.autoMap 逐条目克隆后合并该源
+ *  的用户标注（applyUserTypeOverrides 会原地改 ColumnInfo.type，浅拷贝外层记录
+ *  不足以保住 analysis.autoMap 不被污染）。预览源不用它（直接用
+ *  mappingState.mapping.cols，已含该源标注）。2026-10-27 按源记忆：
+ *  此前非预览源裸用 autoMap，用户标注不生效。 */
+function colsForSource(src: SourceItem, headerRow: Row): ColumnMapping['cols'] {
+  const cols: ColumnMapping['cols'] = {};
+  Object.entries(src.analysis?.autoMap?.cols || {}).forEach(([ci, col]) => {
+    // type null 与空串同义（均视为未识别），归一为空串以对齐 DetectedColumn
+    cols[ci] = { header: col.header, type: col.type ?? '', samples: col.samples };
+  });
+  applyUserTypeOverrides({ cols }, src.userTypes, headerRow);
+  return cols;
+}
+
 export function confirmMapping(): void {
   // Collect data rows WITH per-source column mappings
   // This is critical for multi-sheet files where each sheet has different column layout
@@ -301,10 +326,12 @@ export function confirmMapping(): void {
     if (dataRows.length === 0) return;
 
     // 列类型收集：税前金额允许多列（多列标记不互相覆盖）；合计金额仅核对、不进导出面。
-    // Use user-modified mapping for preview source, auto-detected for others
+    // 预览源用用户修改的映射；其余源用各自 analysis.autoMap 合并该源的用户标注
+    // （2026-10-27 按源记忆，确认时各源用各自最后一次标注）
+    const headerRow = srcHeaderRow(src);
     const cols = src.id === state.previewSourceId
       ? state.mappingState!.mapping!.cols
-      : (src.analysis?.autoMap?.cols || {});
+      : colsForSource(src, headerRow);
     let typeToCol: Record<string, number | null> = {};
     const amountCols: number[] = [];
     let amountTotalCol: number | null = null;
@@ -335,7 +362,6 @@ export function confirmMapping(): void {
     // （逐金额列求和），再交拆行按笔展开（docs/superpowers/specs/2026-10-14-row-merge-design.md）；
     // 要素冲突组保持不合并，汇总后弹窗待人工确认，不静默带病下发
     if (mergeDupRowsOn()) {
-      const headerRow = (state.mappingState!.headerRow as Row | undefined) || [];
       const mres = mergeSamePersonRows(outRows, {
         typeToCol,
         amountCols,
@@ -356,7 +382,6 @@ export function confirmMapping(): void {
     // 金额归一写入最左拆分列（= typeToCol.amount），其余拆分列清空，备注写来源列头——
     // 导出管线的单金额列假设零改动
     if (amountCols.length >= 2) {
-      const headerRow = (state.mappingState!.headerRow as Row | undefined) || [];
       const labelNote = splitNoteLabelsOn();
       const res = expandAmountSplitRows(outRows, {
         amountCols,

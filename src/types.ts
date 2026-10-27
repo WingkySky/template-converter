@@ -77,6 +77,9 @@ export interface SourceItem {
   /** 图片源的人工编辑覆盖：mapping 预览与 confirmMapping 统一优先取本字段
    * （直接改智能检测结果会被 confirmMapping 的重检测丢弃） */
   dataRowsOverride?: Rows;
+  /** 用户对该源的手动列类型标注（含「不识别」空串），键为列索引字符串；
+   *  与 dataRowsOverride 同级同寿命（会话内记忆，切预览源不丢） */
+  userTypes?: Record<string, string>;
 }
 
 /** 知识库商社条目（shangSheMap 的值） */

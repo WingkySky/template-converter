@@ -45,9 +45,6 @@ export interface AppState {
     sourcesData?: SourceDataEntry[];
     /** 图片源的识别校验结果（showMappingStep 现算；编辑格时读取候选，见 ui/steps/mapping.ts） */
     ocrValidation?: import('./core/image/validate').OcrValidation;
-    /** 用户在下拉中显式标注的列类型（含「不识别」空串）——重渲染合并时用户选择优先，
-     *  否则重新自动检测会把「手动清空」冲回自动结果（2026-10-15 用户反馈回归） */
-    userTypes?: Record<string, string>;
   };
   targetTemplate: string | null;
   selectedTemplates: string[];

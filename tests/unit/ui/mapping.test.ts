@@ -119,6 +119,62 @@ describe('applyUserTypeOverrides（2026-10-15 回归：重渲染冲掉手动标�
   });
 });
 
+describe('按源记忆（2026-10-27：列类型标注挂 SourceItem，切预览源不丢）', () => {
+  function changeType(col: string, value: string): void {
+    onMapChange({
+      dataset: { col },
+      value,
+      parentElement: { classList: { toggle: vi.fn() } },
+    } as unknown as HTMLSelectElement);
+  }
+
+  it('核心回归：s1 标注 → 切 s2 → 切回 s1，s1 保持用户标注且 s2 不被串', () => {
+    pushSource('s1', [['姓名', '手机号'], ['张三', '13800138000']]);
+    pushSource('s2', [['姓名', '手机号'], ['李四', '13900139000']]);
+    showMappingStep(); // 预览 s1
+    changeType('1', 'bankCard');
+    expect(state.sources[0].userTypes).toEqual({ '1': 'bankCard' });
+    expect(dom.el('mapping-content').innerHTML).toContain('<option value="bankCard" selected>');
+    setPreview('s2');
+    expect(state.sources[1].userTypes).toBeUndefined();
+    expect(dom.el('mapping-content').innerHTML).not.toContain('<option value="bankCard" selected>');
+    setPreview('s1');
+    expect(state.sources[0].userTypes).toEqual({ '1': 'bankCard' });
+    expect(dom.el('mapping-content').innerHTML).toContain('<option value="bankCard" selected>');
+  });
+
+  it('confirmMapping：非预览源用各自标注，analysis.autoMap 不被污染', () => {
+    pushSource('s1', [['姓名', '手机号'], ['张三', '13800138000']]);
+    pushSource('s2', [['甲', '乙'], ['李四', '13900139000']]);
+    state.sources[1].analysis = {
+      sheetName: '', rows: [], score: 0, dataRowsCount: 1, headerRowIndex: 0,
+      autoMap: { cols: { '0': { type: '', header: '甲', samples: [] }, '1': { type: 'phone', header: '乙', samples: [] } } },
+    };
+    setPreview('s2');
+    changeType('0', 'name'); // 用户把 s2 的「甲」列标为姓名
+    setPreview('s1');
+    confirmMapping();
+    const sd = state.mappingState!.sourcesData!;
+    expect(sd).toHaveLength(2);
+    expect(sd[0].typeToCol.name).toBe(0);
+    // 旧实现非预览源裸用 autoMap，此处只会得到 { phone: 1 }
+    expect(sd[1].typeToCol).toEqual({ name: 0, phone: 1 });
+    // 合并走的是克隆，analysis.autoMap 保持纯自动结果：甲列仍为未识别
+    expect(state.sources[1].analysis!.autoMap.cols['0'].type).toBe('');
+  });
+
+  it('「不识别」空串标注切走切回不丢', () => {
+    pushSource('s1', [['姓名', '手机号'], ['张三', '13800138000']]);
+    pushSource('s2', [['姓名', '手机号'], ['李四', '13900139000']]);
+    showMappingStep();
+    changeType('1', '');
+    setPreview('s2');
+    setPreview('s1');
+    expect(state.sources[0].userTypes).toEqual({ '1': '' });
+    expect(dom.el('mapping-content').innerHTML).toContain('<option value="" selected>');
+  });
+});
+
 describe('onMapChange', () => {
   it('写回 mappingState 中对应列的类型并切换 selected 样式', () => {
     state.mappingState = { mapping: { cols: { '1': { type: '', header: '手机号', samples: [] } } } };

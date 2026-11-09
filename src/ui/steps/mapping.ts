@@ -14,6 +14,7 @@ import { mergeSamePersonRows } from '../../core/mapping/row-merge';
 import { computeOcrValidation } from '../../core/image/validate';
 import { cleanNameCell } from '../../core/clean/names';
 import { buildRawDirectTable, buildMappedDirectTable } from '../../core/export/direct-export';
+import type { DirectTable, MappedDirectTable } from '../../core/export/direct-export';
 import { buildGenericWorkbook } from '../../core/export/builders';
 import { getTodayStr } from '../../core/export/naming';
 import { saveWorkbook } from '../../io/save-file';
@@ -468,9 +469,20 @@ async function exportDirect(kind: 'raw' | 'mapped'): Promise<void> {
     alert('没有已识别的列，请先在上方确认列映射'); return;
   }
   const nameCol = directNameColIndex(cols, !!ms?.source?.dataRowsOverride);
-  const table = kind === 'raw'
-    ? buildRawDirectTable(dataRows, cols, { nameColIndex: nameCol })
-    : buildMappedDirectTable(dataRows, cols, { nameColIndex: nameCol });
+  let table: DirectTable | MappedDirectTable;
+  if (kind === 'raw') {
+    table = buildRawDirectTable(dataRows, cols, { nameColIndex: nameCol });
+  } else {
+    const mapped = buildMappedDirectTable(dataRows, cols, { nameColIndex: nameCol, labelNote: splitNoteLabelsOn() });
+    // 发钱场景零容错：拆分合计不平不静默落盘，弹窗明示、用户可返回修改（与 confirmMapping 同文案口径）
+    if (mapped.mismatches.length) {
+      const lines = mapped.mismatches.slice(0, 5)
+        .map(m => `第 ${m.rowIndex + 1} 行：拆分合计 ${m.sum} ≠ 合计 ${m.declared}`)
+        .join('\n');
+      if (!confirm(`整理表有 ${mapped.mismatches.length} 行拆分金额之和与合计列不符：\n${lines}${mapped.mismatches.length > 5 ? '\n…' : ''}\n\n仍要继续导出吗？（取消可返回映射页修正后重新导出）`)) return;
+    }
+    table = mapped;
+  }
   const wb = buildGenericWorkbook(table.headers, table.rows);
   await saveWorkbook(wb, `${directExportBaseName()}_${kind === 'raw' ? '识别原表' : '整理表'}_${getTodayStr()}.xlsx`);
 }

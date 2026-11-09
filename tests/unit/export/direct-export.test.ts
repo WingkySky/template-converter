@@ -2,6 +2,8 @@
 // 设计 docs/superpowers/specs/2026-10-14-mapping-direct-export-design.md。
 import { describe, it, expect } from 'vitest';
 import { buildRawDirectTable, buildMappedDirectTable } from '../../../src/core/export/direct-export';
+import { detectColumnMapping } from '../../../src/core/mapping/column-detect';
+import type { Rows } from '../../../src/types';
 
 // 映射页典型列集（乱序键验证列序升序；含不识别列与合计列）
 const COLS = {
@@ -67,15 +69,97 @@ describe('buildMappedDirectTable', () => {
     expect(t.rows[0][0]).toBe('王辉2');
   });
 
-  it('多列金额全部保留不拆行，第 2 列起表头追加序号（税前金额2）', () => {
+  it('≥2 列金额自动拆行：归一最左列，只输出单「税前金额」，行数展开', () => {
     const cols = {
       '1': { header: '第一笔', type: 'amount' },
       '2': { header: '第二笔', type: 'amount' },
       '0': { header: '姓名', type: 'name' },
     };
     const t = buildMappedDirectTable([['张三', '100', '200']], cols, { nameColIndex: 0 });
-    expect(t.headers).toEqual(['姓名', '税前金额', '税前金额2']);
-    expect(t.rows[0]).toEqual(['张三', '100', '200']);
+    expect(t.headers).toEqual(['姓名', '税前金额']);
+    expect(t.rows).toEqual([['张三', '100'], ['张三', '200']]);
+    expect(t.mismatches).toEqual([]);
+  });
+
+  it('拆行空金额跳过；全拆分列空行保留 1 行', () => {
+    const cols = {
+      '0': { header: '姓名', type: 'name' },
+      '1': { header: '第一笔', type: 'amount' },
+      '2': { header: '第二笔', type: 'amount' },
+    };
+    const t = buildMappedDirectTable([
+      ['甲', '', '300'],
+      ['乙', '', ''],
+      ['丙', '100', '200'],
+    ], cols, { nameColIndex: null });
+    expect(t.headers).toEqual(['姓名', '税前金额']);
+    expect(t.rows).toEqual([
+      ['甲', '300'],
+      ['乙', ''],
+      ['丙', '100'],
+      ['丙', '200'],
+    ]);
+  });
+
+  it('拆行含合计列核对：mismatches 返回原始行号与差值，合计列不输出', () => {
+    const cols = {
+      '0': { header: '姓名', type: 'name' },
+      '1': { header: '第一笔', type: 'amount' },
+      '2': { header: '第二笔', type: 'amount' },
+      '3': { header: '税后', type: 'amountTotal' },
+    };
+    const t = buildMappedDirectTable([
+      ['甲', '100', '200', '300'],
+      ['乙', '50', '70', '999'],
+    ], cols, { nameColIndex: null });
+    expect(t.headers).toEqual(['姓名', '税前金额']);
+    expect(t.mismatches).toEqual([{ rowIndex: 1, sum: 120, declared: 999 }]);
+  });
+
+  it('labelNote 开启且源无备注列 → 行尾追加虚拟「备注」列写来源标签', () => {
+    const cols = {
+      '0': { header: '姓名', type: 'name' },
+      '1': { header: '第一笔', type: 'amount' },
+      '2': { header: '第二笔', type: 'amount' },
+    };
+    const t = buildMappedDirectTable([['张三', '100', '200']], cols, { nameColIndex: null, labelNote: true });
+    expect(t.headers).toEqual(['姓名', '税前金额', '备注']);
+    expect(t.rows).toEqual([['张三', '100', '第一笔'], ['张三', '200', '第二笔']]);
+  });
+
+  it('既有备注列时拆行标签追加不覆盖（labelNote 开启）', () => {
+    const cols = {
+      '0': { header: '姓名', type: 'name' },
+      '1': { header: '第一笔', type: 'amount' },
+      '2': { header: '第二笔', type: 'amount' },
+      '3': { header: '备注', type: 'note' },
+    };
+    const t = buildMappedDirectTable([['张三', '100', '200', '原备注']], cols, { nameColIndex: null, labelNote: true });
+    expect(t.headers).toEqual(['姓名', '税前金额', '备注']);
+    expect(t.rows).toEqual([['张三', '100', '原备注；第一笔'], ['张三', '200', '原备注；第二笔']]);
+  });
+
+  it('天九分润端到端：detect 求和仲裁 → 整理表拆行（金额 sanitizeAmount 两位小数）', () => {
+    const header = ['姓名', '税后', '第一笔', '第二笔', '账号', '银行', '身份证', '电话', '是否认证'];
+    const rows: Rows = [
+      ['王辉', 42264.219047619, 34501.786, 7762.433047619, '4563510100864730480', '中国银行北京亮马河大厦支行', '110101195902021012', '13501211095', '是'],
+      ['王辉2', 40905.2666666667, '', 40905.2666666667, '4563510100864730480', '中国银行北京亮马河大厦支行', '110101195902021012', '13501211095', '是'],
+      ['吴佐生', 84971.0857142857, 70026.0879999998, 14944.9977142859, '6222600525660099999', '交行柳州支行', '330323197310304915', '13807722188', '是'],
+      ['卞福林', 40881.3714285714, 28616.962, 12264.4094285714, '6228491728004778778', '中国农业银行股份有限公司邯郸沁阳支行', '130403195603160330', '18132236888', '是'],
+    ];
+    const det = detectColumnMapping(header, rows);
+    const t = buildMappedDirectTable(rows, det.cols, { nameColIndex: null });
+    expect(t.headers).toEqual(['姓名', '税前金额', '银行卡号', '身份证', '手机号']);
+    expect(t.rows).toEqual([
+      ['王辉', '34501.79', '4563510100864730480', '110101195902021012', '13501211095'],
+      ['王辉', '7762.43', '4563510100864730480', '110101195902021012', '13501211095'],
+      ['王辉2', '40905.27', '4563510100864730480', '110101195902021012', '13501211095'],
+      ['吴佐生', '70026.09', '6222600525660099999', '330323197310304915', '13807722188'],
+      ['吴佐生', '14945', '6222600525660099999', '330323197310304915', '13807722188'],
+      ['卞福林', '28616.96', '6228491728004778778', '130403195603160330', '18132236888'],
+      ['卞福林', '12264.41', '6228491728004778778', '130403195603160330', '18132236888'],
+    ]);
+    expect(t.mismatches).toEqual([]);
   });
 
   it('全空值行保留（不做行过滤），全空出空串', () => {
@@ -93,5 +177,12 @@ describe('buildMappedDirectTable', () => {
     const t = buildMappedDirectTable(ROWS, { '0': { header: '甲', type: '' } }, { nameColIndex: null });
     expect(t.headers).toEqual([]);
     expect(t.rows[0]).toEqual([]);
+  });
+
+  it('单金额列（含合计列）与旧实现逐格一致，mismatches 恒空', () => {
+    const t = buildMappedDirectTable(ROWS, COLS, { nameColIndex: null });
+    expect(t.headers).toEqual(['姓名', '银行卡号', '税前金额']);
+    expect(t.rows[0]).toEqual(['王辉2', '6222000011112222', '1234.5']);
+    expect(t.mismatches).toEqual([]);
   });
 });

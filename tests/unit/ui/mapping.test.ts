@@ -55,6 +55,20 @@ describe('showMappingStep 渲染', () => {
     showMappingStep();
     expect(dom.el('mapping-content').innerHTML).toContain('请至少勾选一个数据表以继续列映射');
   });
+
+  it('多列金额仲裁生效时渲染「检测到 N 列税前金额」拆分提示条（2026-11-09 天九分润表）', () => {
+    pushSource('s1', [
+      ['姓名', '税后', '第一笔', '第二笔', '账号', '身份证', '电话'],
+      ['王辉', '42264.22', '34501.79', '7762.43', '4563510100864730480', '110101195902021012', '13501211095'],
+      ['王辉2', '40905.27', '', '40905.27', '4563510100864730480', '110101195902021012', '13501211095'],
+      ['吴佐生', '84971.09', '70026.09', '14945', '6222600525660099999', '330323197310304915', '13807722188'],
+    ]);
+    showMappingStep();
+    const html = dom.el('mapping-content').innerHTML;
+    expect(html).toContain('列税前金额');
+    expect(html).toContain('确认后将展开为');
+    expect(html).toContain('合计金额（仅核对');
+  });
 });
 
 describe('toggleSrc / setPreview', () => {

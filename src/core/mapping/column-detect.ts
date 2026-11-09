@@ -6,6 +6,7 @@
 // 银行名称仲裁，见 detectColumnMapping 内注释。
 import type { Row, Rows } from '../../types';
 import { getAmountColumnScore, isAmountLikeNumber } from './amount-score';
+import { parseAmountValue } from './row-expand';
 
 export const COL_KEYWORDS: Record<string, RegExp> = {
   name:       /姓名|户名|名称|人员|收款人|员工|name|person/i,
@@ -69,6 +70,109 @@ function cardLikeRatio(dataRows: Rows, ci: number): number {
   return nonEmpty ? hits / nonEmpty : 1;
 }
 
+// ==================== 多列金额仲裁（2026-11-09 设计
+// docs/superpowers/specs/2026-11-09-multi-amount-column-detect-design.md）====================
+// 现状自动检测最多认领 1 列 amount，「第一笔/第二笔」类拆分表落空 → 拆分功能不触发。
+// 在单列认领前尝试：候选列收集 → 行级求和验证（某列 ≈ 其余若干列之和）→
+// 命中则合计列标 amountTotal、被加列全标 amount；未命中走表头模式兜底；再不中回退单列逻辑。
+
+/** 候选列排除表（仅作用于多列仲裁的候选收集；单列回退路径的评分排除表不动——
+ *  「数量」表头 + 数据兜底的既有行为依赖 getAmountColumnScore 现状） */
+const MULTI_AMOUNT_EXCLUDE_RE = /序号|编号|方式|类型|选择|状态|税源地|开户|账号|账户|手机号|电话|身份证|证件|银行|备注|说明|业务|减除|扣除|速算|核定|预扣(?!前)|免税|服务费|个税|数量|件数|笔数|人数|天数/;
+
+/** 拆分模式表头：「第N笔」「N月」（表头模式兜底用，求和验证未命中时的弱信号） */
+const PEN_HEADER_RE = /^第\s*(?:[一二三四五六七八九十百]+|\d+)\s*笔$/;
+const MONTH_HEADER_RE = /^(?:0?[1-9]|1[0-2])\s*月$/;
+
+interface SumHit {
+  totalCol: number;
+  splitCols: number[];
+  ok: number;
+}
+
+/** 候选金额列：未被关键词认领、表头不命中排除正则、前 12 非空样本金额样占比 ≥ 0.6 */
+function collectAmountCandidates(headerRow: Row, dataRows: Rows, mapping: Record<number, string | undefined>): number[] {
+  const out: number[] = [];
+  headerRow.forEach((cell, ci) => {
+    if (mapping[ci]) return;
+    const h = String(cell || '').trim();
+    if (h && MULTI_AMOUNT_EXCLUDE_RE.test(h)) return;
+    let nonEmpty = 0, hits = 0;
+    dataRows.slice(0, 12).forEach(row => {
+      const v = row?.[ci];
+      if (v == null || String(v).trim() === '') return;
+      nonEmpty++;
+      if (isAmountLikeNumber(v)) hits++;
+    });
+    if (nonEmpty > 0 && hits / nonEmpty >= 0.6) out.push(ci);
+  });
+  return out;
+}
+
+/** 行级求和计数：sum(splitCols) ≈ row[totalCol]，容差与 row-expand 合计核对同口径 */
+function countSumHits(rows: Rows, totalCol: number, splitCols: number[]): { checked: number; ok: number } {
+  let checked = 0, ok = 0;
+  for (const row of rows) {
+    const rawDeclared = String(row?.[totalCol] ?? '').replace(/[,，\s￥¥]/g, '');
+    if (!rawDeclared || !/\d/.test(rawDeclared)) continue;
+    const declared = Number(rawDeclared);
+    if (!Number.isFinite(declared)) continue;
+    let sum = 0;
+    splitCols.forEach(ci => {
+      const v = parseAmountValue(row?.[ci]);
+      if (v != null) sum += v;
+    });
+    checked++;
+    const tolerance = Math.max(0.02, Math.abs(declared) * 1e-6);
+    if (Math.abs(sum - declared) <= tolerance) ok++;
+  }
+  return { checked, ok };
+}
+
+/** 两段验证：前 20 行粗筛 ≥80% 才做全量复核（大表防组合 × 全行扫描），均需 checked ≥ 3 */
+function verifySumRelation(dataRows: Rows, totalCol: number, splitCols: number[]): SumHit | null {
+  const probe = dataRows.length <= 20 ? dataRows : dataRows.slice(0, 20);
+  const p = countSumHits(probe, totalCol, splitCols);
+  if (p.checked < 3 || p.ok / p.checked < 0.8) return null;
+  const full = dataRows.length <= 20 ? p : countSumHits(dataRows, totalCol, splitCols);
+  if (full.checked < 3 || full.ok / full.checked < 0.8) return null;
+  return { totalCol, splitCols, ok: full.ok };
+}
+
+/** 求和仲裁：枚举「合计列 c + 拆分子集 S(|S|≥2)」，择优（拆分列数 → 命中行数 → 列序） */
+function arbitrateMultiAmount(dataRows: Rows, candidates: number[]): SumHit | null {
+  const hits: SumHit[] = [];
+  for (const c of candidates) {
+    const rest = candidates.filter(x => x !== c);
+    for (let mask = 0; mask < (1 << rest.length); mask++) {
+      const subset: number[] = [];
+      for (let b = 0; b < rest.length; b++) if (mask & (1 << b)) subset.push(rest[b]);
+      if (subset.length < 2) continue;
+      const hit = verifySumRelation(dataRows, c, subset);
+      if (hit) hits.push(hit);
+    }
+  }
+  if (!hits.length) return null;
+  hits.sort((a, b) =>
+    b.splitCols.length - a.splitCols.length ||
+    b.ok - a.ok ||
+    a.totalCol - b.totalCol ||
+    (a.splitCols.join(',') < b.splitCols.join(',') ? -1 : 1),
+  );
+  return hits[0];
+}
+
+/** 表头模式兜底：候选中 ≥2 列呈「第N笔」或「N月」同模式 → 全标 amount（无合计核对） */
+function headerSplitFallback(headerRow: Row, candidates: number[]): boolean {
+  let pen = 0, month = 0;
+  candidates.forEach(ci => {
+    const h = String(headerRow?.[ci] || '').trim();
+    if (PEN_HEADER_RE.test(h)) pen++;
+    else if (MONTH_HEADER_RE.test(h)) month++;
+  });
+  return pen >= 2 || month >= 2;
+}
+
 /**
  * detectColumnMapping 的返回。
  * amountCol / nameCol 由 analyzeSheet 在识别后补写（legacy 中为动态挂载属性），
@@ -107,22 +211,40 @@ export function detectColumnMapping(headerRow: Row, dataRows: Rows): ColumnMappi
     }
   });
 
-  let bestIdx: number | null = null, bestScore = -Infinity;
-  headerRow.forEach((cell, i) => {
-    if (mapping[i]) return;
-    const s = getAmountColumnScore(cell, dataRows, i);
-    if (s > bestScore) { bestScore = s; bestIdx = i; }
-  });
-  if (bestIdx != null && bestScore >= 5) { mapping[bestIdx] = 'amount'; used.add('amount'); }
+  // ---- 多列金额仲裁（2026-11-09 设计）：单列认领前先尝试；未命中回退下方单列逻辑 ----
+  const candidates = collectAmountCandidates(headerRow, dataRows, mapping);
+  let multiClaimed = false;
+  if (candidates.length >= 2 && candidates.length <= 8) {
+    const hit = arbitrateMultiAmount(dataRows, candidates);
+    if (hit) {
+      mapping[hit.totalCol] = 'amountTotal'; used.add('amountTotal');
+      hit.splitCols.forEach(ci => { mapping[ci] = 'amount'; });
+      used.add('amount');
+      multiClaimed = true;
+    } else if (headerSplitFallback(headerRow, candidates)) {
+      candidates.forEach(ci => { mapping[ci] = 'amount'; });
+      used.add('amount');
+      multiClaimed = true;
+    }
+  }
+  if (!multiClaimed) {
+    let bestIdx: number | null = null, bestScore = -Infinity;
+    headerRow.forEach((cell, i) => {
+      if (mapping[i]) return;
+      const s = getAmountColumnScore(cell, dataRows, i);
+      if (s > bestScore) { bestScore = s; bestIdx = i; }
+    });
+    if (bestIdx != null && bestScore >= 5) { mapping[bestIdx] = 'amount'; used.add('amount'); }
 
-  if (!used.has('amount')) {
-    for (let ci = 0; ci < headerRow.length; ci++) {
-      if (mapping[ci]) continue;
-      let n = 0;
-      for (let ri = 0; ri < Math.min(dataRows.length, 10); ri++) {
-        if (isAmountLikeNumber(dataRows[ri]?.[ci])) n++;
+    if (!used.has('amount')) {
+      for (let ci = 0; ci < headerRow.length; ci++) {
+        if (mapping[ci]) continue;
+        let n = 0;
+        for (let ri = 0; ri < Math.min(dataRows.length, 10); ri++) {
+          if (isAmountLikeNumber(dataRows[ri]?.[ci])) n++;
+        }
+        if (n >= Math.min(dataRows.length, 10) * 0.5) { mapping[ci] = 'amount'; used.add('amount'); break; }
       }
-      if (n >= Math.min(dataRows.length, 10) * 0.5) { mapping[ci] = 'amount'; used.add('amount'); break; }
     }
   }
 

@@ -37,8 +37,9 @@ export interface ExpandAmountSplitResult {
   expandedRowCount: number;
 }
 
-/** 宽松数值化：剥离千分位/币符/空白后转 Number；不可解析/0 视同空（返回 null） */
-function parseAmountValue(raw: unknown): number | null {
+/** 宽松数值化：剥离千分位/币符/空白后转 Number；不可解析/0 视同空（返回 null）。
+ * 2026-11-09 起由 column-detect 的多列金额仲裁复用（同一口径，避免两处漂移） */
+export function parseAmountValue(raw: unknown): number | null {
   const s = String(raw ?? '').replace(/[,，\s￥¥]/g, '');
   if (!s || !/\d/.test(s)) return null;
   const n = Number(s);

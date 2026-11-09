@@ -162,3 +162,112 @@ describe('COL_KEYWORDS / COL_TYPE_LABELS 常量', () => {
     expect(Object.keys(COL_TYPE_LABELS)).toHaveLength(14);
   });
 });
+
+// ============ 多列金额仲裁（2026-11-09 设计）============
+
+const TJ_HEADER = ['姓名', '税后', '第一笔', '第二笔', '账号', '银行', '身份证', '电话', '是否认证'];
+const tjRows: Rows = [
+  ['王辉', 42264.219047619, 34501.786, 7762.433047619, '4563510100864730480', '中国银行北京亮马河大厦支行', '110101195902021012', '13501211095', '是'],
+  ['王辉2', 40905.2666666667, '', 40905.2666666667, '4563510100864730480', '中国银行北京亮马河大厦支行', '110101195902021012', '13501211095', '是'],
+  ['吴佐生', 84971.0857142857, 70026.0879999998, 14944.9977142859, '6222600525660099999', '交行柳州支行', '330323197310304915', '13807722188', '是'],
+  ['卞福林', 40881.3714285714, 28616.962, 12264.4094285714, '6228491728004778778', '中国农业银行股份有限公司邯郸沁阳支行', '130403195603160330', '18132236888', '是'],
+];
+
+describe('多列金额仲裁（求和关系）', () => {
+  it('天九分润表：税后=第一笔+第二笔 → 税后 amountTotal、两笔均 amount', () => {
+    const r = detectColumnMapping(TJ_HEADER, tjRows);
+    expect(r.cols['1'].type).toBe('amountTotal');
+    expect(r.cols['2'].type).toBe('amount');
+    expect(r.cols['3'].type).toBe('amount');
+    expect(r.cols['0'].type).toBe('name');
+    expect(r.cols['4'].type).toBe('bankCard');
+    expect(r.cols['6'].type).toBe('idCard');
+    expect(r.cols['7'].type).toBe('phone');
+  });
+
+  it('月份式：合计=1月+2月 → 合计 amountTotal、月份列均 amount', () => {
+    const rows: Rows = [
+      ['张三', '100', '200', '300'],
+      ['李四', '150', '250', '400'],
+      ['王五', '80', '90', '170'],
+      ['赵六', '60', '70', '130'],
+    ];
+    const r = detectColumnMapping(['姓名', '1月', '2月', '合计'], rows);
+    expect(r.cols['3'].type).toBe('amountTotal');
+    expect(r.cols['1'].type).toBe('amount');
+    expect(r.cols['2'].type).toBe('amount');
+  });
+
+  it('项目名式（表头看不出拆分语义）：总计=劳务费+代缴费 → 求和关系命中', () => {
+    const rows: Rows = [
+      ['张三', '100', '200', '300'],
+      ['李四', '150', '250', '400'],
+      ['王五', '80', '90', '170'],
+      ['赵六', '60', '70', '130'],
+    ];
+    const r = detectColumnMapping(['姓名', '劳务费', '代缴费', '总计'], rows);
+    expect(r.cols['3'].type).toBe('amountTotal');
+    expect(r.cols['1'].type).toBe('amount');
+    expect(r.cols['2'].type).toBe('amount');
+  });
+
+  it('无求和关系 → 回退单列认领（评分最左列 amount，另一列空）', () => {
+    const rows: Rows = [
+      ['张三', '100', '50'],
+      ['李四', '200', '60'],
+      ['王五', '300', '70'],
+      ['赵六', '400', '80'],
+    ];
+    const r = detectColumnMapping(['姓名', '金额A', '金额B'], rows);
+    expect(r.cols['1'].type).toBe('amount');
+    expect(r.cols['2'].type).toBe('');
+  });
+
+  it('序号列被排除正则挡住，不参与仲裁也不被认领', () => {
+    const rows: Rows = [
+      ['张三', '1', '100', '200', '300'],
+      ['李四', '2', '150', '250', '400'],
+      ['王五', '3', '80', '90', '170'],
+      ['赵六', '4', '60', '70', '130'],
+    ];
+    const r = detectColumnMapping(['姓名', '序号', '第一笔', '第二笔', '合计'], rows);
+    expect(r.cols['1'].type).toBe('');
+    expect(r.cols['2'].type).toBe('amount');
+    expect(r.cols['3'].type).toBe('amount');
+    expect(r.cols['4'].type).toBe('amountTotal');
+  });
+
+  it('候选恰为 2 且表头呈「第N笔」模式 → 无合计兜底全标 amount', () => {
+    const rows: Rows = [
+      ['张三', '100', '200'],
+      ['李四', '150', '250'],
+      ['王五', '80', '90'],
+      ['赵六', '60', '70'],
+    ];
+    const r = detectColumnMapping(['姓名', '第一笔', '第二笔'], rows);
+    expect(r.cols['1'].type).toBe('amount');
+    expect(r.cols['2'].type).toBe('amount');
+  });
+
+  it('候选 > 8 → 不仲裁，回退单列逻辑（仅评分最高一列 amount）', () => {
+    const header = ['姓名', ...Array.from({ length: 9 }, (_, i) => `金额${i + 1}`)];
+    const rows: Rows = [
+      ['张三', '11', '23', '37', '41', '53', '67', '71', '83', '97'],
+      ['李四', '12', '24', '38', '42', '54', '68', '72', '84', '98'],
+      ['王五', '13', '25', '39', '43', '55', '69', '73', '85', '99'],
+      ['赵六', '14', '26', '40', '44', '56', '70', '74', '86', '100'],
+    ];
+    const r = detectColumnMapping(header, rows);
+    const amountCount = Object.values(r.cols).filter(c => c.type === 'amount').length;
+    expect(amountCount).toBe(1);
+    expect(r.cols['1'].type).toBe('amount');
+  });
+
+  it('既有行为回归：单金额列场景（数量表头数据兜底、应发金额评分）不受仲裁影响', () => {
+    const r1 = detectColumnMapping(['姓名', '应发金额'], [['张三', '5200.5']]);
+    expect(r1.cols['1'].type).toBe('amount');
+    const rows: Rows = Array.from({ length: 10 }, (_, i) => ['张三', i < 6 ? String(100 + i) : '不适用']);
+    const r2 = detectColumnMapping(['姓名', '数量'], rows);
+    expect(r2.cols['1'].type).toBe('amount');
+  });
+});
